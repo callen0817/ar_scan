@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "config_id": "orin_dual_airy_gemini",
-  "name": "Orin NX Dual Scanner (Airy LiDAR + Gemini 336L)",
+  "name": "scanR",
   "scanner_node_id": "scanar-01",
   "sensor_instances": [
     "robosense_airy_01",

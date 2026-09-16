@@ -97,7 +97,7 @@ void QmlBridge::refreshData() {
             item["type"] = "SCANNER_CONFIG";
             item["status"] = "CONFIG";
             item["details"] = QString("%1 sensor instances (Airy LiDAR + Gemini 336L)").arg(cfg.sensor_instances().size());
-            item["validationNotice"] = "Dual Scanner Configuration — Rigid extrinsic status is UNKNOWN (Awaiting M7)";
+            item["validationNotice"] = "scanR Configuration — Rigid extrinsic status is UNKNOWN (Awaiting M7)";
             scannerList_.append(item);
             availableScanners_.append(item["name"].toString());
         }

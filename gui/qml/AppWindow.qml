@@ -202,6 +202,16 @@ ApplicationWindow {
                         color: "#94a3b8"
                         font.pixelSize: 11
                     }
+                    Rectangle {
+                        width: 1
+                        height: 14
+                        color: "#334155"
+                    }
+                    Text {
+                        text: "Storage: " + bridge.hostDisk
+                        color: "#94a3b8"
+                        font.pixelSize: 11
+                    }
                 }
             }
         }
