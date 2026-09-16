@@ -7,8 +7,11 @@
 #include <QVariantMap>
 #include <QTimer>
 #include <memory>
+#include <vector>
 #include "core/storage/storage_engine.hpp"
 #include "platform/platform_adapter.hpp"
+#include "core/drivers/airy/airy_sensor_adapter.hpp"
+#include "core/slam/airy/airy_lio_backend.hpp"
 
 namespace av::gui {
 
@@ -33,6 +36,14 @@ class QmlBridge : public QObject {
     Q_PROPERTY(QString sensorStatus READ sensorStatus NOTIFY sensorStatusChanged)
     Q_PROPERTY(QString trackingStatus READ trackingStatus NOTIFY trackingStatusChanged)
     Q_PROPERTY(qlonglong pointsCaptured READ pointsCaptured NOTIFY pointsCapturedChanged)
+
+    // Spatial Telemetry Properties
+    Q_PROPERTY(qreal currentPoseX READ currentPoseX NOTIFY poseChanged)
+    Q_PROPERTY(qreal currentPoseY READ currentPoseY NOTIFY poseChanged)
+    Q_PROPERTY(qreal currentPoseZ READ currentPoseZ NOTIFY poseChanged)
+    Q_PROPERTY(qreal currentYaw READ currentYaw NOTIFY poseChanged)
+    Q_PROPERTY(int trajectoryPointCount READ trajectoryPointCount NOTIFY trajectoryChanged)
+    Q_PROPERTY(bool hasMapData READ hasMapData NOTIFY mapDataUpdated)
 
     // Scanner / Profile Properties
     Q_PROPERTY(QString selectedScannerId READ selectedScannerId NOTIFY selectedScannerChanged)
@@ -65,8 +76,10 @@ class QmlBridge : public QObject {
 public:
     explicit QmlBridge(std::shared_ptr<core::storage::StorageEngine> storage,
                        std::shared_ptr<platform::IPlatformAdapter> platform,
+                       std::shared_ptr<core::drivers::airy::AirySensorAdapter> airyAdapter = nullptr,
+                       std::shared_ptr<core::slam::airy::AiryLioBackend> airyBackend = nullptr,
                        QObject *parent = nullptr);
-    ~QmlBridge() override = default;
+    ~QmlBridge() override;
 
     // Getters: Projects
     QString projectName() const { return projectName_; }
@@ -86,6 +99,14 @@ public:
     QString sensorStatus() const { return sensorStatus_; }
     QString trackingStatus() const { return trackingStatus_; }
     qlonglong pointsCaptured() const { return pointsCaptured_; }
+
+    // Getters: Spatial Telemetry
+    qreal currentPoseX() const { return currentPoseX_; }
+    qreal currentPoseY() const { return currentPoseY_; }
+    qreal currentPoseZ() const { return currentPoseZ_; }
+    qreal currentYaw() const { return currentYaw_; }
+    int trajectoryPointCount() const { return static_cast<int>(trajectory_.size()); }
+    bool hasMapData() const { return hasMapData_ || pointsCaptured_ > 0; }
 
     // Getters: Scanners
     QString selectedScannerId() const { return selectedScannerId_; }
@@ -129,6 +150,11 @@ public:
     Q_INVOKABLE bool stopCapture();
     Q_INVOKABLE bool saveCapture();
 
+    // Q_INVOKABLE: 3D and 2D Geometry Access
+    Q_INVOKABLE QVariantList getDisplayPoints(int maxPoints = 8000) const;
+    Q_INVOKABLE QVariantList getTrajectoryPoints() const;
+    Q_INVOKABLE bool loadSavedCapture(const QString& captureId);
+
     // Q_INVOKABLE: 3D Camera Interaction
     Q_INVOKABLE void orbit3D(qreal deltaX, qreal deltaY);
     Q_INVOKABLE void pan3D(qreal deltaX, qreal deltaY);
@@ -155,6 +181,9 @@ signals:
     void sensorStatusChanged();
     void trackingStatusChanged();
     void pointsCapturedChanged();
+    void poseChanged();
+    void trajectoryChanged();
+    void mapDataUpdated();
     void selectedScannerChanged();
     void availableScannersChanged();
     void scannerListChanged();
@@ -166,10 +195,13 @@ signals:
 
 private slots:
     void onTimerTick();
+    void onTelemetryTick();
 
 private:
     std::shared_ptr<core::storage::StorageEngine> storage_;
     std::shared_ptr<platform::IPlatformAdapter> platform_;
+    std::shared_ptr<core::drivers::airy::AirySensorAdapter> airyAdapter_;
+    std::shared_ptr<core::slam::airy::AiryLioBackend> airyBackend_;
 
     // Project state
     QString projectName_{"No Project Loaded"};
@@ -198,6 +230,15 @@ private:
     QString trackingStatus_{"IDLE"};
     qlonglong pointsCaptured_{0};
 
+    // Live Spatial Data & Geometry
+    qreal currentPoseX_{0.0};
+    qreal currentPoseY_{0.0};
+    qreal currentPoseZ_{0.0};
+    qreal currentYaw_{0.0};
+    bool hasMapData_{false};
+    std::vector<core::schemas::PointXYZI> mapPoints_;
+    std::vector<core::schemas::Pose3D> trajectory_;
+
     // 3D Camera state
     qreal camYaw3D_{45.0};
     qreal camPitch3D_{30.0};
@@ -212,7 +253,11 @@ private:
     qreal zoom2D_{40.0};
 
     QTimer* timer_{nullptr};
+    QTimer* telemetryTimer_{nullptr};
     int elapsed_seconds_{0};
+
+    void saveMapPcd(const std::string& filepath, const std::vector<core::schemas::PointXYZI>& points) const;
+    bool loadMapPcd(const std::string& filepath, std::vector<core::schemas::PointXYZI>& out_points);
 };
 
 } // namespace av::gui

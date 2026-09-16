@@ -10,6 +10,9 @@ add_library(av_core STATIC
     schemas/map_metadata.cpp
     logging/logger.cpp
     storage/storage_engine.cpp
+    drivers/airy/airy_ipc_client.cpp
+    drivers/airy/airy_sensor_adapter.cpp
+    slam/airy/airy_lio_backend.cpp
 )
 
 target_include_directories(av_core PUBLIC

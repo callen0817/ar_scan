@@ -48,3 +48,33 @@ target_link_libraries(test_m2_acceptance PRIVATE
     ${CMAKE_DL_LIBS}
 )
 add_test(NAME test_m2_acceptance COMMAND test_m2_acceptance)
+
+add_executable(test_airy_adapter unit/test_airy_adapter.cpp)
+target_link_libraries(test_airy_adapter PRIVATE av_core)
+add_test(NAME test_airy_adapter COMMAND test_airy_adapter)
+
+add_executable(test_m3_acceptance acceptance/test_m3_acceptance.cpp)
+target_link_libraries(test_m3_acceptance PRIVATE
+    av_gui
+    av_platform
+    av_core
+    Qt5::Core
+    Qt5::Gui
+    Qt5::Quick
+    Qt5::Qml
+    ${CMAKE_DL_LIBS}
+)
+add_test(NAME test_m3_acceptance COMMAND test_m3_acceptance)
+
+add_executable(test_airy_hardware_live acceptance/test_airy_hardware_live.cpp)
+target_link_libraries(test_airy_hardware_live PRIVATE
+    av_gui
+    av_platform
+    av_core
+    Qt5::Core
+    Qt5::Gui
+    Qt5::Quick
+    Qt5::Qml
+    ${CMAKE_DL_LIBS}
+)
+

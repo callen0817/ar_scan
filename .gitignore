@@ -25,6 +25,8 @@ Makefile
 # Logs and runtime artifacts
 *.log
 projects/temp/
+projects/proj_*
+projects/airy_qualification
 test_output/
 
 # Third party extracted binaries (reproducibly restored via scripts/setup_thirdparty.sh)

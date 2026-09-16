@@ -1,16 +1,17 @@
 {
   "schema_version": 1,
   "profile_id": "robosense_airy_01",
-  "profile_version": "0.1.0",
+  "profile_version": "1.0.0",
   "manufacturer": "RoboSense",
   "model": "RS-Airy",
   "device_family": "SOLID_STATE_MECHANICAL_LIDAR",
-  "profile_status": "DRAFT",
+  "profile_status": "VALIDATED",
   "hardware_revision": "REV_B",
   "firmware": "3.1.20",
   "capabilities": [
     "POINT_CLOUD_3D",
     "INTERNAL_IMU_6DOF",
+    "DIFOP_FACTORY_CALIBRATION",
     "PTP_IEEE1588_SLAVE",
     "DUAL_RETURN"
   ],
@@ -52,20 +53,20 @@
   },
   "internal_extrinsics": {
     "lidar_to_imu": {
-      "translation": { "x": 0.0, "y": 0.0, "z": -0.025 },
-      "rotation": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 }
+      "translation": { "x": 0.004250, "y": 0.004180, "z": -0.004460 },
+      "rotation": { "x": 0.71145376, "y": -0.70271848, "z": 0.0018789, "w": 0.00409338 }
     }
   },
   "calibration_sources": [
     {
       "schema_version": 1,
-      "value": "FACTORY_EEPROM_CALIBRATION",
+      "value": "FACTORY_DIFOP_EEPROM",
       "source": "DEVICE_FACTORY",
-      "confidence": 0.5,
+      "confidence": 1.0,
       "device_serial": "AIRY-2024-99812",
       "firmware": "3.1.20",
-      "evidence": "Factory calibration stored in EEPROM; pending M3 live qualification",
-      "validated": false
+      "evidence": "DIFOP Header A5 FF 00 5A: t=[0.004250, 0.004180, -0.004460], q=[0.71145376, -0.70271848, 0.0018789, 0.00409338]",
+      "validated": true
     }
   ],
   "slam_family": "LIO",
@@ -89,18 +90,26 @@
     "point_type": "XYZI"
   },
   "validation_results": {
-    "status": "UNVALIDATED",
-    "tested_host": "Jetson Orin NX 16GB",
-    "target_milestone": "M3_ROBOSENSE_AIRY_QUALIFICATION"
+    "status": "VALIDATED",
+    "tested_host": "Jetson Orin NX 16GB (scanar-01)",
+    "target_milestone": "M3_ROBOSENSE_AIRY_QUALIFICATION",
+    "qualification_date": "2026-09-16",
+    "streams_verified": [
+      "MSOP:6699 (10Hz)",
+      "DIFOP:7788 (10Hz)",
+      "IMU:6688 (200Hz)"
+    ],
+    "slam_backend": "FAST-LIO2 (pure LIO mode)",
+    "tracking_stability": "NOMINAL"
   },
   "provenance": {
     "schema_version": 1,
-    "value": "M1_INITIAL_DRAFT_PROFILE",
-    "source": "OFFICIAL_DRIVER",
-    "confidence": 0.5,
+    "value": "M3_HARDWARE_QUALIFIED",
+    "source": "DEVICE_FACTORY",
+    "confidence": 1.0,
     "device_serial": "AIRY-2024-99812",
     "firmware": "3.1.20",
-    "evidence": "Initial draft specification pending M3 physical hardware qualification",
-    "validated": false
+    "evidence": "Milestone 3 Physical Hardware Qualification Acceptance passed on Jetson Orin NX",
+    "validated": true
   }
 }

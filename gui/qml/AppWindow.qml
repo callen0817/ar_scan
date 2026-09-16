@@ -342,6 +342,8 @@ ApplicationWindow {
                     function onCam3DChanged() { canvas3d.requestPaint(); }
                     function onPointsCapturedChanged() { canvas3d.requestPaint(); }
                     function onCaptureStateChanged() { canvas3d.requestPaint(); }
+                    function onMapDataUpdated() { canvas3d.requestPaint(); }
+                    function onPoseChanged() { canvas3d.requestPaint(); }
                 }
 
                 onPaint: {
@@ -478,6 +480,72 @@ ApplicationWindow {
                         ctx.arc(ptTarget.x, ptTarget.y, 5, 0, 2 * Math.PI);
                         ctx.stroke();
                     }
+
+                    // 4. Draw Real 3D Trajectory Path
+                    var traj = bridge.getTrajectoryPoints();
+                    if (traj.length > 1) {
+                        ctx.strokeStyle = "#f59e0b";
+                        ctx.lineWidth = 2.5;
+                        ctx.beginPath();
+                        var first = true;
+                        for (var ti = 0; ti < traj.length; ++ti) {
+                            var ptT = project(traj[ti][0], traj[ti][1], traj[ti][2]);
+                            if (ptT) {
+                                if (first) {
+                                    ctx.moveTo(ptT.x, ptT.y);
+                                    first = false;
+                                } else {
+                                    ctx.lineTo(ptT.x, ptT.y);
+                                }
+                            }
+                        }
+                        ctx.stroke();
+                    }
+
+                    // 5. Draw Real Point Cloud Points
+                    var pts = bridge.getDisplayPoints(8000);
+                    if (pts.length > 0) {
+                        for (var pi = 0; pi < pts.length; ++pi) {
+                            var p3 = project(pts[pi][0], pts[pi][1], pts[pi][2]);
+                            if (p3) {
+                                var zVal = pts[pi][2];
+                                var col = (zVal < -0.2) ? "#3b82f6" : (zVal < 0.2) ? "#38bdf8" : (zVal < 0.8) ? "#10b981" : (zVal < 1.5) ? "#facc15" : "#ef4444";
+                                ctx.fillStyle = col;
+                                ctx.fillRect(p3.x - 1, p3.y - 1, 2.5, 2.5);
+                            }
+                        }
+                    }
+
+                    // 6. Draw Scanner Pose & Heading Vector in 3D
+                    var scX = bridge.currentPoseX;
+                    var scY = bridge.currentPoseY;
+                    var scZ = bridge.currentPoseZ;
+                    var scYaw = bridge.currentYaw;
+                    var ptScanner = project(scX, scY, scZ);
+                    if (ptScanner) {
+                        var fwdX = scX + 0.6 * Math.cos(scYaw);
+                        var fwdY = scY + 0.6 * Math.sin(scYaw);
+                        var ptFwd = project(fwdX, fwdY, scZ);
+
+                        // Scanner position marker
+                        ctx.fillStyle = "#38bdf8";
+                        ctx.beginPath();
+                        ctx.arc(ptScanner.x, ptScanner.y, 5, 0, 2 * Math.PI);
+                        ctx.fill();
+                        ctx.strokeStyle = "#ffffff";
+                        ctx.lineWidth = 1.5;
+                        ctx.stroke();
+
+                        // Heading arrow
+                        if (ptFwd) {
+                            ctx.strokeStyle = "#ef4444";
+                            ctx.lineWidth = 2.5;
+                            ctx.beginPath();
+                            ctx.moveTo(ptScanner.x, ptScanner.y);
+                            ctx.lineTo(ptFwd.x, ptFwd.y);
+                            ctx.stroke();
+                        }
+                    }
                 }
             }
 
@@ -520,7 +588,7 @@ ApplicationWindow {
             ColumnLayout {
                 anchors.centerIn: parent
                 spacing: 8
-                visible: bridge.pointsCaptured === 0
+                visible: bridge.pointsCaptured === 0 && !bridge.hasMapData
 
                 Rectangle {
                     Layout.alignment: Qt.AlignHCenter
@@ -538,7 +606,7 @@ ApplicationWindow {
                     }
                 }
                 Text {
-                    text: bridge.isCapturing ? "Spatial Session Active (Awaiting M3 Hardware Streams)" : "AV Common Map Viewport"
+                    text: bridge.isCapturing ? "Spatial Session Active (Ingesting Airy Point Cloud)" : "AV Common Map Viewport"
                     color: "#e2e8f0"
                     font.bold: true
                     font.pixelSize: 14
@@ -546,7 +614,7 @@ ApplicationWindow {
                     Layout.alignment: Qt.AlignHCenter
                 }
                 Text {
-                    text: "Physical sensor stream qualification scheduled for M3 (RoboSense Airy)"
+                    text: "Physical Hardware Pipeline: RoboSense RS-Airy (ONLINE_LIDAR @ 192.168.1.200)"
                     color: "#64748b"
                     font.pixelSize: 12
                     horizontalAlignment: Text.AlignHCenter
@@ -689,6 +757,9 @@ ApplicationWindow {
                     target: bridge
                     function onCam2DChanged() { canvas2d.requestPaint(); }
                     function onCaptureStateChanged() { canvas2d.requestPaint(); }
+                    function onPointsCapturedChanged() { canvas2d.requestPaint(); }
+                    function onMapDataUpdated() { canvas2d.requestPaint(); }
+                    function onPoseChanged() { canvas2d.requestPaint(); }
                 }
 
                 onPaint: {
@@ -809,6 +880,66 @@ ApplicationWindow {
                     ctx.fillStyle = "#cbd5e1";
                     ctx.font = "bold 10px monospace";
                     ctx.fillText("1.0 m", barX + (barPixels * 0.5) - 14, barY - 6);
+
+                    // 5. Draw Real 2D Trajectory Path
+                    var traj2d = bridge.getTrajectoryPoints();
+                    if (traj2d.length > 1) {
+                        ctx.strokeStyle = "#f59e0b";
+                        ctx.lineWidth = 2.5;
+                        ctx.beginPath();
+                        for (var tj = 0; tj < traj2d.length; ++tj) {
+                            var sP = worldToScreen(traj2d[tj][0], traj2d[tj][1]);
+                            if (tj === 0) ctx.moveTo(sP.x, sP.y);
+                            else ctx.lineTo(sP.x, sP.y);
+                        }
+                        ctx.stroke();
+                    }
+
+                    // 6. Draw Real 2D Point Cloud (Floor Plan Projection)
+                    var pts2d = bridge.getDisplayPoints(8000);
+                    if (pts2d.length > 0) {
+                        for (var pk = 0; pk < pts2d.length; ++pk) {
+                            var sPt = worldToScreen(pts2d[pk][0], pts2d[pk][1]);
+                            var z2 = pts2d[pk][2];
+                            var c2 = (z2 < -0.2) ? "#3b82f6" : (z2 < 0.2) ? "#38bdf8" : (z2 < 0.8) ? "#10b981" : (z2 < 1.5) ? "#facc15" : "#ef4444";
+                            ctx.fillStyle = c2;
+                            ctx.fillRect(sPt.x - 1, sPt.y - 1, 2, 2);
+                        }
+                    }
+
+                    // 7. Draw Scanner 2D Pose & Directional Heading Cone
+                    var sc2X = bridge.currentPoseX;
+                    var sc2Y = bridge.currentPoseY;
+                    var sc2Yaw = bridge.currentYaw;
+                    var sScanner = worldToScreen(sc2X, sc2Y);
+
+                    // Heading Cone (Forward field of view)
+                    var coneLen = 22; // pixels
+                    var coneAngle = 0.45; // ~26 deg
+                    var tipX = sScanner.x + coneLen * Math.cos(sc2Yaw);
+                    var tipY = sScanner.y - coneLen * Math.sin(sc2Yaw); // Y-up inverted on screen
+                    var leftX = sScanner.x + (coneLen * 0.7) * Math.cos(sc2Yaw - coneAngle);
+                    var leftY = sScanner.y - (coneLen * 0.7) * Math.sin(sc2Yaw - coneAngle);
+                    var rightX = sScanner.x + (coneLen * 0.7) * Math.cos(sc2Yaw + coneAngle);
+                    var rightY = sScanner.y - (coneLen * 0.7) * Math.sin(sc2Yaw + coneAngle);
+
+                    ctx.fillStyle = "rgba(56, 189, 248, 0.35)";
+                    ctx.beginPath();
+                    ctx.moveTo(sScanner.x, sScanner.y);
+                    ctx.lineTo(leftX, leftY);
+                    ctx.lineTo(tipX, tipY);
+                    ctx.lineTo(rightX, rightY);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // Scanner Center Dot
+                    ctx.fillStyle = "#38bdf8";
+                    ctx.beginPath();
+                    ctx.arc(sScanner.x, sScanner.y, 4.5, 0, 2 * Math.PI);
+                    ctx.fill();
+                    ctx.strokeStyle = "#ffffff";
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
                 }
             }
 

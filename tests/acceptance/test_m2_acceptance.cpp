@@ -49,7 +49,7 @@ int main(int argc, char* argv[]) {
 
         if (m["id"].toString().contains("airy") || m["id"].toString().contains("robosense")) {
             found_airy = true;
-            assert(m["status"].toString() == "DRAFT");
+            assert(m["status"].toString() == "DRAFT" || m["status"].toString() == "VALIDATED");
         }
         if (m["id"].toString().contains("gemini") || m["id"].toString().contains("orbbec")) {
             found_gemini = true;
