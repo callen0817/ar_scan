@@ -1,0 +1,32 @@
+# Build outputs
+build/
+bin/
+lib/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+
+# CMake artifacts
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs and runtime artifacts
+*.log
+projects/temp/
+test_output/
+
+# Third party extracted binaries (reproducibly restored via scripts/setup_thirdparty.sh)
+third_party/qml/
+third_party/lib/

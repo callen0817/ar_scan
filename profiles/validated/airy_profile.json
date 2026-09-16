@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "profile_id": "robosense_airy_01",
+  "profile_version": "1.0.0",
+  "manufacturer": "RoboSense",
+  "model": "RS-Airy",
+  "device_family": "SOLID_STATE_MECHANICAL_LIDAR",
+  "profile_status": "VALIDATED",
+  "hardware_revision": "REV_B",
+  "firmware": "3.1.20",
+  "capabilities": [
+    "POINT_CLOUD_3D",
+    "INTERNAL_IMU_6DOF",
+    "PTP_IEEE1588_SLAVE",
+    "DUAL_RETURN"
+  ],
+  "transport": "ETHERNET_UDP",
+  "driver": "rslidar_sdk",
+  "sdk": "RoboSense SDK 1.5.8",
+  "streams": [
+    {
+      "name": "lidar_points",
+      "type": "POINT_CLOUD",
+      "format": "XYZI_PCL",
+      "nominal_rate_hz": 10.0,
+      "enabled": true
+    },
+    {
+      "name": "internal_imu",
+      "type": "IMU",
+      "format": "6DOF_IMU",
+      "nominal_rate_hz": 200.0,
+      "enabled": true
+    }
+  ],
+  "timestamp_sources": [
+    "PTP_IEEE1588",
+    "DEVICE_HARDWARE_CLOCK"
+  ],
+  "synchronization": "PTP_IEEE1588",
+  "coordinate_frames": {
+    "body_frame": "airy_base_link",
+    "lidar_frame": "airy_lidar",
+    "imu_frame": "airy_imu"
+  },
+  "intrinsics": {
+    "laser_beams": 32,
+    "vertical_fov_deg": 31.0,
+    "horizontal_fov_deg": 360.0,
+    "range_min_m": 0.2,
+    "range_max_m": 150.0
+  },
+  "internal_extrinsics": {
+    "lidar_to_imu": {
+      "translation": { "x": 0.0, "y": 0.0, "z": -0.025 },
+      "rotation": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 }
+    }
+  },
+  "calibration_sources": [
+    {
+      "schema_version": 1,
+      "value": "FACTORY_EEPROM_CALIBRATION",
+      "source": "DEVICE_FACTORY",
+      "confidence": 0.99,
+      "device_serial": "AIRY-2024-99812",
+      "firmware": "3.1.20",
+      "evidence": "Factory calibration validated against calibration targets",
+      "validated": true
+    }
+  ],
+  "slam_family": "LIO",
+  "slam_backend": "FAST-LIO2",
+  "slam_parameters": {
+    "max_iterations": 4,
+    "point_filter_num": 2,
+    "fov_degree": 360.0,
+    "cube_side_length": 1000.0,
+    "blind_zone_radius": 0.2,
+    "extrinsic_est_en": false
+  },
+  "preprocessing": {
+    "voxel_filter_size_m": 0.05,
+    "outlier_removal_k": 20,
+    "outlier_std_dev": 2.0
+  },
+  "output_contract": {
+    "target_frame": "map",
+    "frequency_hz": 10.0,
+    "point_type": "XYZI"
+  },
+  "validation_results": {
+    "tested_host": "Jetson Orin NX 16GB",
+    "packet_drop_rate": 0.0,
+    "status": "PASS"
+  },
+  "provenance": {
+    "schema_version": 1,
+    "value": "OFFICIAL_INTEGRATION",
+    "source": "OFFICIAL_DRIVER",
+    "confidence": 1.0,
+    "device_serial": "AIRY-2024-99812",
+    "firmware": "3.1.20",
+    "evidence": "RoboSense official driver integration and live capture verification",
+    "validated": true
+  }
+}

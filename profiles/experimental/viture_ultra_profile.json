@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "profile_id": "viture_luma_ultra_01",
+  "profile_version": "0.1.0",
+  "manufacturer": "VITURE",
+  "model": "Luma Ultra XR Glasses",
+  "device_family": "SMART_GLASSES_SPATIAL_DISPLAY",
+  "profile_status": "EXPERIMENTAL",
+  "hardware_revision": "ULTRA_EVT",
+  "firmware": "1.0.12",
+  "capabilities": [
+    "HEAD_TRACKING_IMU",
+    "MICROPHONE_ARRAY",
+    "VIRTUAL_DISPLAY"
+  ],
+  "transport": "USB_HID_UVC",
+  "driver": "linux_hidraw",
+  "sdk": "VITURE Linux SDK (Evaluation)",
+  "streams": [
+    {
+      "name": "head_pose_imu",
+      "type": "IMU",
+      "format": "6DOF_IMU",
+      "nominal_rate_hz": 120.0,
+      "enabled": true
+    }
+  ],
+  "timestamp_sources": [
+    "HOST_MONOTONIC"
+  ],
+  "synchronization": "HOST_TIMESTAMP",
+  "coordinate_frames": {
+    "head_frame": "viture_glasses_link"
+  },
+  "intrinsics": {},
+  "internal_extrinsics": {},
+  "calibration_sources": [
+    {
+      "schema_version": 1,
+      "value": "EXPERIMENTAL_ESTIMATE",
+      "source": "INFERRED_FROM_GEOMETRY",
+      "confidence": 0.50,
+      "device_serial": "VITURE-35CA-1104",
+      "firmware": "1.0.12",
+      "evidence": "USB HID descriptor enumeration and rate testing",
+      "validated": false
+    }
+  ],
+  "slam_family": "VIO",
+  "slam_backend": "PENDING_M5_EVALUATION",
+  "slam_parameters": {},
+  "preprocessing": {},
+  "output_contract": {
+    "target_frame": "head_pose",
+    "frequency_hz": 60.0
+  },
+  "validation_results": {
+    "tested_host": "Jetson Orin NX 16GB",
+    "status": "EXPERIMENTAL_PENDING_M5"
+  },
+  "provenance": {
+    "schema_version": 1,
+    "value": "PRELIMINARY_AUDIT",
+    "source": "OFFICIAL_DOCUMENTATION",
+    "confidence": 0.60,
+    "device_serial": "VITURE-35CA-1104",
+    "firmware": "1.0.12",
+    "evidence": "Connected USB HID interfaces audited in M1",
+    "validated": false
+  }
+}

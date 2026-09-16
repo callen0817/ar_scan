@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "profile_id": "orbbec_gemini_336l_01",
+  "profile_version": "1.0.0",
+  "manufacturer": "Orbbec",
+  "model": "Gemini 336L",
+  "device_family": "ACTIVE_STEREO_RGBD_CAMERA",
+  "profile_status": "VALIDATED",
+  "hardware_revision": "HW_1.0",
+  "firmware": "1.2.34",
+  "capabilities": [
+    "DEPTH_STREAM",
+    "RGB_STREAM",
+    "INFRARED_LEFT",
+    "INFRARED_RIGHT",
+    "INTERNAL_IMU_6DOF",
+    "HARDWARE_TIMESTAMP"
+  ],
+  "transport": "USB3_V4L2",
+  "driver": "orbbec_camera",
+  "sdk": "OrbbecSDK 1.10.8",
+  "streams": [
+    {
+      "name": "depth",
+      "type": "DEPTH",
+      "format": "16UC1_MM",
+      "nominal_rate_hz": 30.0,
+      "enabled": true
+    },
+    {
+      "name": "color",
+      "type": "RGB",
+      "format": "RGB8",
+      "nominal_rate_hz": 30.0,
+      "enabled": true
+    },
+    {
+      "name": "imu",
+      "type": "IMU",
+      "format": "6DOF_IMU",
+      "nominal_rate_hz": 200.0,
+      "enabled": true
+    }
+  ],
+  "timestamp_sources": [
+    "DEVICE_HARDWARE_CLOCK",
+    "HOST_MONOTONIC"
+  ],
+  "synchronization": "HARDWARE_SYNC",
+  "coordinate_frames": {
+    "body_frame": "gemini_link",
+    "depth_optical_frame": "gemini_depth_optical_frame",
+    "rgb_optical_frame": "gemini_rgb_optical_frame",
+    "imu_frame": "gemini_imu_frame"
+  },
+  "intrinsics": {
+    "depth": {
+      "width": 640,
+      "height": 400,
+      "fx": 382.4,
+      "fy": 382.4,
+      "cx": 320.5,
+      "cy": 200.2
+    },
+    "rgb": {
+      "width": 1280,
+      "height": 720,
+      "fx": 640.2,
+      "fy": 640.2,
+      "cx": 640.0,
+      "cy": 360.0
+    }
+  },
+  "internal_extrinsics": {
+    "depth_to_rgb": {
+      "translation": { "x": -0.050, "y": 0.0, "z": 0.0 },
+      "rotation": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 }
+    }
+  },
+  "calibration_sources": [
+    {
+      "schema_version": 1,
+      "value": "DEVICE_FACTORY_FLASH",
+      "source": "DEVICE_FACTORY",
+      "confidence": 0.98,
+      "device_serial": "OB-336L-77412",
+      "firmware": "1.2.34",
+      "evidence": "Factory calibration stored in internal camera flash memory",
+      "validated": true
+    }
+  ],
+  "slam_family": "RGBD_SLAM",
+  "slam_backend": "RTAB-Map",
+  "slam_parameters": {
+    "max_depth_m": 6.0,
+    "min_depth_m": 0.25,
+    "feature_type": "GFTT_ORB",
+    "max_features": 1000
+  },
+  "preprocessing": {
+    "temporal_filter": true,
+    "spatial_filter": true,
+    "hole_filling_radius": 2
+  },
+  "output_contract": {
+    "target_frame": "map",
+    "frequency_hz": 15.0,
+    "point_type": "XYZRGB"
+  },
+  "validation_results": {
+    "tested_host": "Jetson Orin NX 16GB",
+    "status": "PASS"
+  },
+  "provenance": {
+    "schema_version": 1,
+    "value": "OFFICIAL_INTEGRATION",
+    "source": "OFFICIAL_SDK",
+    "confidence": 1.0,
+    "device_serial": "OB-336L-77412",
+    "firmware": "1.2.34",
+    "evidence": "Orbbec SDK integration and stream validation",
+    "validated": true
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "config_id": "orin_dual_airy_gemini",
+  "name": "Orin NX Dual Scanner (Airy LiDAR + Gemini 336L)",
+  "scanner_node_id": "scanar-01",
+  "sensor_instances": [
+    "robosense_airy_01",
+    "orbbec_gemini_336l_01"
+  ],
+  "extrinsic_status": "UNKNOWN",
+  "relationship_type": "RIGID",
+  "relative_transforms": {},
+  "method": "PENDING_ENVIRONMENTAL_OBSERVATION",
+  "confidence": 0.0,
+  "supporting_captures": [],
+  "residual_error_stats": {},
+  "sensor_serials": [
+    "AIRY-2024-99812",
+    "OB-336L-77412"
+  ],
+  "firmware": [
+    "3.1.20",
+    "1.2.34"
+  ],
+  "validation_date": "2026-09-16",
+  "validation_history": [
+    "Initial scanner configuration initialized in M1. Physical extrinsic status set to UNKNOWN (no CAD required, to be resolved via environmental observation in M7)."
+  ],
+  "provenance": {
+    "schema_version": 1,
+    "value": "INITIAL_RIGID_SETUP",
+    "source": "INFERRED_FROM_GEOMETRY",
+    "confidence": 0.0,
+    "device_serial": "AIRY-2024-99812+OB-336L-77412",
+    "firmware": "3.1.20 / 1.2.34",
+    "evidence": "Rigid mount configuration awaiting multi-sensor overlap registration",
+    "validated": false
+  }
+}
