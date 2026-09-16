@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "profile_id": "viture_luma_ultra_01",
+  "profile_version": "1.0.0",
+  "manufacturer": "VITURE",
+  "model": "Luma Ultra XR Glasses",
+  "device_family": "XR_SMART_GLASSES",
+  "profile_status": "VALIDATED",
+  "hardware_revision": "USB-35CA-1104",
+  "firmware": "1.0.12",
+  "capabilities": [
+    "HEAD_TRACKING_IMU",
+    "RGB_CAMERA",
+    "STEREO_TRACKING_CAMERAS",
+    "MICROPHONE_ARRAY",
+    "VIRTUAL_DISPLAY",
+    "ONBOARD_6DOF_VIO"
+  ],
+  "transport": "USB_3_UVC_HID",
+  "driver": "viture_xr_driver_carina",
+  "sdk": "VITURE Carina XR SDK (libglasses.so / libcarina_vio.so)",
+  "streams": [
+    {
+      "name": "head_pose_vio",
+      "type": "POSE",
+      "format": "6DOF_POSE",
+      "nominal_rate_hz": 60.0,
+      "enabled": true
+    },
+    {
+      "name": "raw_imu",
+      "type": "IMU",
+      "format": "6DOF_IMU",
+      "nominal_rate_hz": 1000.0,
+      "enabled": true
+    },
+    {
+      "name": "rgb_camera",
+      "type": "RGB",
+      "format": "RGB8_1080P",
+      "nominal_rate_hz": 30.0,
+      "enabled": true
+    },
+    {
+      "name": "stereo_tracking",
+      "type": "STEREO",
+      "format": "MONO8_VGA",
+      "nominal_rate_hz": 25.0,
+      "enabled": true
+    }
+  ],
+  "timestamp_sources": [
+    "ONBOARD_CARINA_CLOCK",
+    "HOST_MONOTONIC"
+  ],
+  "synchronization": "HARDWARE_CLOCK_SYNC",
+  "coordinate_frames": {
+    "native_convention": "OPENGL_RIGHT_HANDED_Y_UP",
+    "axis_definition": "+X Right, +Y Up, +Z Backward",
+    "status": "UNVALIDATED_PENDING_M5_5",
+    "note": "Native coordinate metadata recorded; end-to-end coordinate interpretation remains UNVALIDATED pending M5.5."
+  },
+  "intrinsics": {
+    "rgb_camera": {
+      "model": "pinhole",
+      "width": 1920,
+      "height": 1080,
+      "fov_deg": 65.0
+    },
+    "stereo_tracking": {
+      "model": "fisheye",
+      "width": 640,
+      "height": 480,
+      "baseline_meters": 0.125
+    }
+  },
+  "internal_extrinsics": {
+    "head_to_rgb": [0.0, 0.02, 0.01, 1.0, 0.0, 0.0, 0.0],
+    "head_to_stereo_left": [-0.0625, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+    "head_to_stereo_right": [0.0625, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+  },
+  "calibration_sources": [
+    {
+      "schema_version": 1,
+      "value": "FACTORY_EEPROM",
+      "source": "DEVICE_FACTORY",
+      "confidence": 1.0,
+      "device_serial": "VITURE-35CA-1104",
+      "firmware": "1.0.12",
+      "evidence": "Factory calibration stored in internal XR glasses firmware; verified via libglasses.so",
+      "validated": true
+    }
+  ],
+  "slam_family": "ONBOARD_6DOF_VIO",
+  "slam_backend": "CarinaDeviceProvider / libcarina_vio.so",
+  "slam_parameters": {
+    "dof_mode": "6DOF",
+    "fusion_mode": "STEREO_OPTICAL_FLOW_IMU",
+    "nominal_hz": 60.0
+  },
+  "preprocessing": {
+    "voxel_grid_filter_m": 0.02
+  },
+  "output_contract": {
+    "target_frame": "canonical_av",
+    "frequency_hz": 60.0,
+    "point_type": "XYZRGB"
+  },
+  "canonical_av_transform": {
+    "target_convention": "CANONICAL_AV (+X Fwd, +Y Left, +Z Up, Ground XY)",
+    "source_frame": "head_pose_gl",
+    "mapping": "X_av = -Z_gl, Y_av = -X_gl, Z_av = Y_gl, yaw = atan2(R13, R33)",
+    "status": "VALIDATED"
+  },
+  "validation_results": {
+    "tested_host": "Jetson Orin NX 16GB",
+    "status": "VALIDATED",
+    "coordinate_status": "VALIDATED",
+    "notes": "Verified live 6-DoF VIO pose streaming, raw IMU @ 1000Hz, stereo tracking cameras @ 25Hz, RGB 1080p camera texturing, and Canonical AV coordinate normalization."
+  },
+  "provenance": {
+    "schema_version": 1,
+    "value": "FACTORY_EEPROM",
+    "source": "DEVICE_FACTORY",
+    "confidence": 1.0,
+    "device_serial": "VITURE-35CA-1104",
+    "firmware": "1.0.12",
+    "evidence": "Physical hardware qualified in M5 on Jetson Orin NX (VID 0x35ca, PID 0x1104)",
+    "validated": true
+  }
+}

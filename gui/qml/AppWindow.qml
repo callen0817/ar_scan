@@ -353,13 +353,13 @@ ApplicationWindow {
                     var cx = width * 0.5;
                     var cy = height * 0.55;
 
-                    // Camera math (Spherical coordinates to cartesian eye position)
+                    // Camera math (Spherical coordinates to cartesian eye position in Canonical AV frame: +X Fwd, +Y Left, +Z Up)
                     var yawRad = bridge.camYaw3D * Math.PI / 180.0;
                     var pitchRad = bridge.camPitch3D * Math.PI / 180.0;
                     var dist = bridge.camDistance3D;
 
-                    var eyeX = bridge.camTargetX3D + dist * Math.cos(pitchRad) * Math.sin(yawRad);
-                    var eyeY = bridge.camTargetY3D - dist * Math.cos(pitchRad) * Math.cos(yawRad);
+                    var eyeX = bridge.camTargetX3D - dist * Math.cos(pitchRad) * Math.cos(yawRad);
+                    var eyeY = bridge.camTargetY3D - dist * Math.cos(pitchRad) * Math.sin(yawRad);
                     var eyeZ = bridge.camTargetZ3D + dist * Math.sin(pitchRad);
 
                     var targetX = bridge.camTargetX3D;
@@ -502,15 +502,19 @@ ApplicationWindow {
                         ctx.stroke();
                     }
 
-                    // 5. Draw Real Point Cloud Points
+                    // 5. Draw Real Point Cloud Points (Real RGB or Height-Gradient Fallback)
                     var pts = bridge.getDisplayPoints(8000);
                     if (pts.length > 0) {
                         for (var pi = 0; pi < pts.length; ++pi) {
-                            var p3 = project(pts[pi][0], pts[pi][1], pts[pi][2]);
+                            var pt = pts[pi];
+                            var p3 = project(pt[0], pt[1], pt[2]);
                             if (p3) {
-                                var zVal = pts[pi][2];
-                                var col = (zVal < -0.2) ? "#3b82f6" : (zVal < 0.2) ? "#38bdf8" : (zVal < 0.8) ? "#10b981" : (zVal < 1.5) ? "#facc15" : "#ef4444";
-                                ctx.fillStyle = col;
+                                if (pt.length >= 8 && pt[7] === true) {
+                                    ctx.fillStyle = "rgb(" + pt[4] + "," + pt[5] + "," + pt[6] + ")";
+                                } else {
+                                    var zVal = pt[2];
+                                    ctx.fillStyle = (zVal < -0.2) ? "#3b82f6" : (zVal < 0.2) ? "#38bdf8" : (zVal < 0.8) ? "#10b981" : (zVal < 1.5) ? "#facc15" : "#ef4444";
+                                }
                                 ctx.fillRect(p3.x - 1, p3.y - 1, 2.5, 2.5);
                             }
                         }
@@ -606,7 +610,7 @@ ApplicationWindow {
                     }
                 }
                 Text {
-                    text: bridge.isCapturing ? "Spatial Session Active (Ingesting Airy Point Cloud)" : "AV Common Map Viewport"
+                    text: bridge.isCapturing ? ("Spatial Session Active (Ingesting " + bridge.selectedScannerName + ")") : "AV Common Map Viewport"
                     color: "#e2e8f0"
                     font.bold: true
                     font.pixelSize: 14
@@ -614,7 +618,7 @@ ApplicationWindow {
                     Layout.alignment: Qt.AlignHCenter
                 }
                 Text {
-                    text: "Physical Hardware Pipeline: RoboSense RS-Airy (ONLINE_LIDAR @ 192.168.1.200)"
+                    text: "Hardware Pipeline: " + bridge.selectedScannerName + " (" + bridge.sensorStatus + ")"
                     color: "#64748b"
                     font.pixelSize: 12
                     horizontalAlignment: Text.AlignHCenter
@@ -774,8 +778,8 @@ ApplicationWindow {
 
                     function worldToScreen(wx, wy) {
                         return {
-                            x: cx + (wx - panX) * zoom,
-                            y: cy - (wy - panY) * zoom // Y-up
+                            x: cx - (wy - panY) * zoom, // Canonical AV: +Y (Left) moves screen Left
+                            y: cy - (wx - panX) * zoom  // Canonical AV: +X (Forward) moves screen Up
                         };
                     }
 
@@ -783,10 +787,10 @@ ApplicationWindow {
                     // Determine grid line step based on zoom
                     var step = (zoom > 50) ? 1.0 : (zoom > 15) ? 2.0 : 5.0;
 
-                    var minWorldX = panX - (cx / zoom) - step;
-                    var maxWorldX = panX + (cx / zoom) + step;
-                    var minWorldY = panY - (cy / zoom) - step;
-                    var maxWorldY = panY + (cy / zoom) + step;
+                    var minWorldX = panX - (cy / zoom) - step;
+                    var maxWorldX = panX + (cy / zoom) + step;
+                    var minWorldY = panY - (cx / zoom) - step;
+                    var maxWorldY = panY + (cx / zoom) + step;
 
                     var startX = Math.floor(minWorldX / step) * step;
                     var startY = Math.floor(minWorldY / step) * step;
@@ -794,39 +798,41 @@ ApplicationWindow {
                     ctx.lineWidth = 1;
                     ctx.font = "9px monospace";
 
+                    // Constant X lines (horizontal across screen)
                     for (var x = startX; x <= maxWorldX; x += step) {
-                        var pTop = worldToScreen(x, maxWorldY);
-                        var pBottom = worldToScreen(x, minWorldY);
+                        var pLeft = worldToScreen(x, maxWorldY);
+                        var pRight = worldToScreen(x, minWorldY);
                         var isZeroX = Math.abs(x) < 0.001;
 
                         ctx.strokeStyle = isZeroX ? "#ef4444" : ((Math.round(x) % 5 === 0) ? "#263244" : "#1a212d");
-                        ctx.beginPath();
-                        ctx.moveTo(pTop.x, pTop.y);
-                        ctx.lineTo(pBottom.x, pBottom.y);
-                        ctx.stroke();
-
-                        // Label
-                        if (Math.round(x) % 5 === 0 || isZeroX) {
-                            ctx.fillStyle = isZeroX ? "#ef4444" : "#475569";
-                            ctx.fillText(x.toFixed(0) + "m", pBottom.x + 3, cy + 12);
-                        }
-                    }
-
-                    for (var y = startY; y <= maxWorldY; y += step) {
-                        var pLeft = worldToScreen(minWorldX, y);
-                        var pRight = worldToScreen(maxWorldX, y);
-                        var isZeroY = Math.abs(y) < 0.001;
-
-                        ctx.strokeStyle = isZeroY ? "#10b981" : ((Math.round(y) % 5 === 0) ? "#263244" : "#1a212d");
                         ctx.beginPath();
                         ctx.moveTo(pLeft.x, pLeft.y);
                         ctx.lineTo(pRight.x, pRight.y);
                         ctx.stroke();
 
                         // Label
+                        if (Math.round(x) % 5 === 0 || isZeroX) {
+                            ctx.fillStyle = isZeroX ? "#ef4444" : "#475569";
+                            ctx.fillText(x.toFixed(0) + "m", cx + 6, pLeft.y - 3);
+                        }
+                    }
+
+                    // Constant Y lines (vertical down screen)
+                    for (var y = startY; y <= maxWorldY; y += step) {
+                        var pTop = worldToScreen(maxWorldX, y);
+                        var pBottom = worldToScreen(minWorldX, y);
+                        var isZeroY = Math.abs(y) < 0.001;
+
+                        ctx.strokeStyle = isZeroY ? "#10b981" : ((Math.round(y) % 5 === 0) ? "#263244" : "#1a212d");
+                        ctx.beginPath();
+                        ctx.moveTo(pTop.x, pTop.y);
+                        ctx.lineTo(pBottom.x, pBottom.y);
+                        ctx.stroke();
+
+                        // Label
                         if (Math.round(y) % 5 === 0 || isZeroY) {
                             ctx.fillStyle = isZeroY ? "#10b981" : "#475569";
-                            ctx.fillText(y.toFixed(0) + "m", cx + 6, pLeft.y - 3);
+                            ctx.fillText(y.toFixed(0) + "m", pBottom.x + 3, cy + 12);
                         }
                     }
 
@@ -838,7 +844,7 @@ ApplicationWindow {
                     ctx.arc(orig.x, orig.y, 4, 0, 2 * Math.PI);
                     ctx.stroke();
 
-                    // 3. North Orientation Compass (Top-Right)
+                    // 3. Direction Compass (Top-Right: +X Forward is UP)
                     var compX = width - 42;
                     var compY = 56;
                     ctx.fillStyle = "#1e293b";
@@ -849,7 +855,7 @@ ApplicationWindow {
                     ctx.lineWidth = 1.5;
                     ctx.stroke();
 
-                    // North Arrow pointing UP (+Y)
+                    // Forward Arrow pointing UP (+X)
                     ctx.fillStyle = "#ef4444";
                     ctx.beginPath();
                     ctx.moveTo(compX, compY - 14);
@@ -860,7 +866,7 @@ ApplicationWindow {
 
                     ctx.fillStyle = "white";
                     ctx.font = "bold 9px sans-serif";
-                    ctx.fillText("N", compX - 3.5, compY - 16);
+                    ctx.fillText("+X", compX - 6.5, compY - 16);
 
                     // 4. Metric Scale Bar (Bottom-Left)
                     var barPixels = zoom * 1.0; // 1 meter bar
@@ -895,14 +901,18 @@ ApplicationWindow {
                         ctx.stroke();
                     }
 
-                    // 6. Draw Real 2D Point Cloud (Floor Plan Projection)
+                    // 6. Draw Real 2D Point Cloud (Floor Plan Projection with Real RGB)
                     var pts2d = bridge.getDisplayPoints(8000);
                     if (pts2d.length > 0) {
                         for (var pk = 0; pk < pts2d.length; ++pk) {
-                            var sPt = worldToScreen(pts2d[pk][0], pts2d[pk][1]);
-                            var z2 = pts2d[pk][2];
-                            var c2 = (z2 < -0.2) ? "#3b82f6" : (z2 < 0.2) ? "#38bdf8" : (z2 < 0.8) ? "#10b981" : (z2 < 1.5) ? "#facc15" : "#ef4444";
-                            ctx.fillStyle = c2;
+                            var p2 = pts2d[pk];
+                            var sPt = worldToScreen(p2[0], p2[1]);
+                            if (p2.length >= 8 && p2[7] === true) {
+                                ctx.fillStyle = "rgb(" + p2[4] + "," + p2[5] + "," + p2[6] + ")";
+                            } else {
+                                var z2 = p2[2];
+                                ctx.fillStyle = (z2 < -0.2) ? "#3b82f6" : (z2 < 0.2) ? "#38bdf8" : (z2 < 0.8) ? "#10b981" : (z2 < 1.5) ? "#facc15" : "#ef4444";
+                            }
                             ctx.fillRect(sPt.x - 1, sPt.y - 1, 2, 2);
                         }
                     }
@@ -913,15 +923,15 @@ ApplicationWindow {
                     var sc2Yaw = bridge.currentYaw;
                     var sScanner = worldToScreen(sc2X, sc2Y);
 
-                    // Heading Cone (Forward field of view)
+                    // Heading Cone (Forward field of view: heading 0 points UP (+X))
                     var coneLen = 22; // pixels
                     var coneAngle = 0.45; // ~26 deg
-                    var tipX = sScanner.x + coneLen * Math.cos(sc2Yaw);
-                    var tipY = sScanner.y - coneLen * Math.sin(sc2Yaw); // Y-up inverted on screen
-                    var leftX = sScanner.x + (coneLen * 0.7) * Math.cos(sc2Yaw - coneAngle);
-                    var leftY = sScanner.y - (coneLen * 0.7) * Math.sin(sc2Yaw - coneAngle);
-                    var rightX = sScanner.x + (coneLen * 0.7) * Math.cos(sc2Yaw + coneAngle);
-                    var rightY = sScanner.y - (coneLen * 0.7) * Math.sin(sc2Yaw + coneAngle);
+                    var tipX = sScanner.x - coneLen * Math.sin(sc2Yaw);
+                    var tipY = sScanner.y - coneLen * Math.cos(sc2Yaw);
+                    var leftX = sScanner.x - (coneLen * 0.7) * Math.sin(sc2Yaw + coneAngle);
+                    var leftY = sScanner.y - (coneLen * 0.7) * Math.cos(sc2Yaw + coneAngle);
+                    var rightX = sScanner.x - (coneLen * 0.7) * Math.sin(sc2Yaw - coneAngle);
+                    var rightY = sScanner.y - (coneLen * 0.7) * Math.cos(sc2Yaw - coneAngle);
 
                     ctx.fillStyle = "rgba(56, 189, 248, 0.35)";
                     ctx.beginPath();

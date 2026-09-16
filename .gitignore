@@ -32,3 +32,4 @@ test_output/
 # Third party extracted binaries (reproducibly restored via scripts/setup_thirdparty.sh)
 third_party/qml/
 third_party/lib/
+third_party/viture/

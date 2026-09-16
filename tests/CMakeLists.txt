@@ -78,3 +78,76 @@ target_link_libraries(test_airy_hardware_live PRIVATE
     ${CMAKE_DL_LIBS}
 )
 
+add_executable(test_gemini_adapter unit/test_gemini_adapter.cpp)
+target_link_libraries(test_gemini_adapter PRIVATE av_core)
+add_test(NAME test_gemini_adapter COMMAND test_gemini_adapter)
+
+add_executable(test_m4_acceptance acceptance/test_m4_acceptance.cpp)
+target_link_libraries(test_m4_acceptance PRIVATE
+    av_gui
+    av_platform
+    av_core
+    Qt5::Core
+    Qt5::Gui
+    Qt5::Quick
+    Qt5::Qml
+    ${CMAKE_DL_LIBS}
+)
+add_test(NAME test_m4_acceptance COMMAND test_m4_acceptance)
+
+add_executable(test_gemini_hardware_live acceptance/test_gemini_hardware_live.cpp)
+target_link_libraries(test_gemini_hardware_live PRIVATE
+    av_gui
+    av_platform
+    av_core
+    Qt5::Core
+    Qt5::Gui
+    Qt5::Quick
+    Qt5::Qml
+    ${CMAKE_DL_LIBS}
+)
+
+add_executable(test_viture_adapter unit/test_viture_adapter.cpp)
+target_link_libraries(test_viture_adapter PRIVATE av_core)
+add_test(NAME test_viture_adapter COMMAND test_viture_adapter)
+
+add_executable(test_m5_acceptance acceptance/test_m5_acceptance.cpp)
+target_link_libraries(test_m5_acceptance PRIVATE
+    av_gui
+    av_platform
+    av_core
+    Qt5::Core
+    Qt5::Gui
+    Qt5::Quick
+    Qt5::Qml
+    ${CMAKE_DL_LIBS}
+)
+add_test(NAME test_m5_acceptance COMMAND test_m5_acceptance)
+
+add_executable(test_viture_hardware_live acceptance/test_viture_hardware_live.cpp)
+target_link_libraries(test_viture_hardware_live PRIVATE
+    av_gui
+    av_platform
+    av_core
+    Qt5::Core
+    Qt5::Gui
+    Qt5::Quick
+    Qt5::Qml
+    ${CMAKE_DL_LIBS}
+)
+
+add_executable(test_m5_5_acceptance acceptance/test_m5_5_acceptance.cpp)
+target_link_libraries(test_m5_5_acceptance PRIVATE
+    av_gui
+    av_platform
+    av_core
+    Qt5::Core
+    Qt5::Gui
+    Qt5::Quick
+    Qt5::Qml
+    ${CMAKE_DL_LIBS}
+)
+add_test(NAME test_m5_5_acceptance COMMAND test_m5_5_acceptance)
+
+
+

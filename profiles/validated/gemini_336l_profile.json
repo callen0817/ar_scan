@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "profile_id": "orbbec_gemini_336l_01",
+  "profile_version": "1.0.0",
+  "manufacturer": "Orbbec",
+  "model": "Gemini 336L",
+  "device_family": "ACTIVE_STEREO_RGBD_CAMERA",
+  "profile_status": "VALIDATED",
+  "hardware_revision": "HW_1.0",
+  "firmware": "1.4.60",
+  "capabilities": [
+    "DEPTH_STREAM",
+    "RGB_STREAM",
+    "INFRARED_LEFT",
+    "INFRARED_RIGHT",
+    "INTERNAL_IMU_6DOF",
+    "HARDWARE_TIMESTAMP",
+    "RGBD_SLAM"
+  ],
+  "transport": "USB3_V4L2",
+  "driver": "orbbec_camera",
+  "sdk": "OrbbecSDK v2 / ROS 2 Humble",
+  "streams": [
+    {
+      "name": "depth",
+      "type": "DEPTH",
+      "format": "16UC1_MM",
+      "nominal_rate_hz": 30.0,
+      "enabled": true
+    },
+    {
+      "name": "color",
+      "type": "RGB",
+      "format": "RGB8",
+      "nominal_rate_hz": 30.0,
+      "enabled": true
+    },
+    {
+      "name": "imu",
+      "type": "IMU",
+      "format": "6DOF_IMU",
+      "nominal_rate_hz": 200.0,
+      "enabled": true
+    }
+  ],
+  "timestamp_sources": [
+    "DEVICE_HARDWARE_CLOCK",
+    "HOST_MONOTONIC"
+  ],
+  "synchronization": "HARDWARE_CLOCK_SYNC",
+  "coordinate_frames": {
+    "body_frame": "camera_link",
+    "depth_optical_frame": "camera_depth_optical_frame",
+    "rgb_optical_frame": "camera_color_optical_frame",
+    "imu_frame": "camera_imu_optical_frame"
+  },
+  "intrinsics": {
+    "depth": {
+      "width": 640,
+      "height": 400,
+      "fx": 382.4,
+      "fy": 382.4,
+      "cx": 320.5,
+      "cy": 200.2
+    },
+    "rgb": {
+      "width": 640,
+      "height": 400,
+      "fx": 382.4,
+      "fy": 382.4,
+      "cx": 320.5,
+      "cy": 200.2
+    }
+  },
+  "internal_extrinsics": {
+    "depth_to_rgb": {
+      "translation": {
+        "x": -0.00042455,
+        "y": -0.02373056,
+        "z": 0.00009320
+      },
+      "rotation": {
+        "x": -0.0006584,
+        "y": -0.0001741,
+        "z": -0.0011888,
+        "w": 0.999999
+      }
+    }
+  },
+  "calibration_sources": [
+    {
+      "schema_version": 1,
+      "value": "FACTORY_EEPROM",
+      "source": "DEVICE_FACTORY",
+      "confidence": 1.0,
+      "device_serial": "CPC6463000XW",
+      "firmware": "1.4.60",
+      "evidence": "Factory calibration stored in internal camera flash; verified via Orbbec SDK",
+      "validated": true
+    }
+  ],
+  "slam_family": "RGBD_SLAM",
+  "slam_backend": "RTAB-Map",
+  "slam_parameters": {
+    "max_depth_m": 6.0,
+    "min_depth_m": 0.25,
+    "feature_type": "GFTT_ORB",
+    "max_features": 1000,
+    "linear_update": 0.05,
+    "angular_update": 0.05
+  },
+  "preprocessing": {
+    "voxel_filter_size_m": 0.05,
+    "depth_registration": true,
+    "colored_point_cloud": true
+  },
+  "output_contract": {
+    "target_frame": "canonical_av",
+    "frequency_hz": 15.0,
+    "point_type": "XYZRGB"
+  },
+  "canonical_av_transform": {
+    "target_convention": "CANONICAL_AV (+X Fwd, +Y Left, +Z Up, Ground XY)",
+    "source_frame": "camera_link",
+    "mapping": "X_av = X_ros, Y_av = Y_ros, Z_av = Z_ros, yaw = yaw_ros",
+    "status": "VALIDATED"
+  },
+  "validation_results": {
+    "status": "VALIDATED",
+    "tested_host": "Jetson Orin NX 16GB (scanar-01)",
+    "target_milestone": "M4_ORBBEC_GEMINI_336L_QUALIFICATION",
+    "qualification_date": "2026-09-16",
+    "physical_device_serial": "CPC6463000XW",
+    "physical_device_firmware": "1.4.60",
+    "usb_bus": "002/003 (USB 3.2 Gen 1)",
+    "tracking_precision": "1.1 mm std dev (295 visual features tracked)",
+    "streams_verified": [
+      "/camera/color/image_raw (30Hz)",
+      "/camera/depth/image_raw (30Hz)",
+      "/camera/depth_registered/points (30Hz)",
+      "/camera/imu/data_raw (200Hz)",
+      "/rtabmap/odom (30Hz)",
+      "/rtabmap/cloud_map (15Hz)",
+      "/rtabmap/map (1Hz OccupancyGrid)"
+    ]
+  },
+  "provenance": {
+    "schema_version": 1,
+    "value": "M4_PHYSICALLY_QUALIFIED",
+    "source": "PHYSICAL_HARDWARE",
+    "confidence": 1.0,
+    "device_serial": "CPC6463000XW",
+    "firmware": "1.4.60",
+    "evidence": "Live physical hardware qualification on Jetson Orin NX (scanar-01) passing M4 physical acceptance tests",
+    "validated": true
+  }
+}

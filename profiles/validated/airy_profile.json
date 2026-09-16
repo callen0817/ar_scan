@@ -85,9 +85,16 @@
     "outlier_std_dev": 2.0
   },
   "output_contract": {
-    "target_frame": "map",
+    "target_frame": "canonical_av",
     "frequency_hz": 10.0,
     "point_type": "XYZI"
+  },
+  "canonical_av_transform": {
+    "target_convention": "CANONICAL_AV (+X Fwd, +Y Left, +Z Up, Ground XY)",
+    "source_frame": "airy_base_link",
+    "gravity_align_en": true,
+    "mapping": "X_av = X_flu, Y_av = Y_flu, Z_av = Z_flu, yaw = yaw_flu",
+    "status": "VALIDATED"
   },
   "validation_results": {
     "status": "VALIDATED",

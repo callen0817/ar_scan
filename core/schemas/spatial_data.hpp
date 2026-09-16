@@ -11,8 +11,15 @@ struct PointXYZI {
     float x{0.0f};
     float y{0.0f};
     float z{0.0f};
-    float intensity{0.0f};
+    float intensity{1.0f};
+    uint8_t r{255};
+    uint8_t g{255};
+    uint8_t b{255};
+    bool has_color{false};
 };
+
+using PointAV = PointXYZI;
+using PointXYZRGB = PointXYZI;
 
 struct PointCloudFrame {
     uint64_t timestamp_ns{0};

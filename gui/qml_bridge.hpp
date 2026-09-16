@@ -12,6 +12,10 @@
 #include "platform/platform_adapter.hpp"
 #include "core/drivers/airy/airy_sensor_adapter.hpp"
 #include "core/slam/airy/airy_lio_backend.hpp"
+#include "core/drivers/gemini/gemini_sensor_adapter.hpp"
+#include "core/slam/gemini/gemini_rgbd_backend.hpp"
+#include "core/drivers/viture/viture_sensor_adapter.hpp"
+#include "core/slam/viture/viture_vio_backend.hpp"
 
 namespace av::gui {
 
@@ -78,6 +82,10 @@ public:
                        std::shared_ptr<platform::IPlatformAdapter> platform,
                        std::shared_ptr<core::drivers::airy::AirySensorAdapter> airyAdapter = nullptr,
                        std::shared_ptr<core::slam::airy::AiryLioBackend> airyBackend = nullptr,
+                       std::shared_ptr<core::drivers::gemini::GeminiSensorAdapter> geminiAdapter = nullptr,
+                       std::shared_ptr<core::slam::gemini::GeminiRgbdBackend> geminiBackend = nullptr,
+                       std::shared_ptr<core::drivers::viture::VitureSensorAdapter> vitureAdapter = nullptr,
+                       std::shared_ptr<core::slam::viture::VitureVioBackend> vitureBackend = nullptr,
                        QObject *parent = nullptr);
     ~QmlBridge() override;
 
@@ -167,6 +175,10 @@ public:
     Q_INVOKABLE void zoom2DByFactor(qreal factor);
     Q_INVOKABLE void recenter2D();
 
+    // Direct PCD serialization & deserialization helpers
+    void saveMapPcd(const std::string& filepath, const std::vector<core::schemas::PointXYZI>& points) const;
+    bool loadMapPcd(const std::string& filepath, std::vector<core::schemas::PointXYZI>& out_points);
+
 signals:
     void projectNameChanged();
     void projectIdChanged();
@@ -202,6 +214,10 @@ private:
     std::shared_ptr<platform::IPlatformAdapter> platform_;
     std::shared_ptr<core::drivers::airy::AirySensorAdapter> airyAdapter_;
     std::shared_ptr<core::slam::airy::AiryLioBackend> airyBackend_;
+    std::shared_ptr<core::drivers::gemini::GeminiSensorAdapter> geminiAdapter_;
+    std::shared_ptr<core::slam::gemini::GeminiRgbdBackend> geminiBackend_;
+    std::shared_ptr<core::drivers::viture::VitureSensorAdapter> vitureAdapter_;
+    std::shared_ptr<core::slam::viture::VitureVioBackend> vitureBackend_;
 
     // Project state
     QString projectName_{"No Project Loaded"};
@@ -255,9 +271,6 @@ private:
     QTimer* timer_{nullptr};
     QTimer* telemetryTimer_{nullptr};
     int elapsed_seconds_{0};
-
-    void saveMapPcd(const std::string& filepath, const std::vector<core::schemas::PointXYZI>& points) const;
-    bool loadMapPcd(const std::string& filepath, std::vector<core::schemas::PointXYZI>& out_points);
 };
 
 } // namespace av::gui

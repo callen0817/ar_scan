@@ -6,6 +6,7 @@
 #include <sstream>
 #include <fstream>
 #include <filesystem>
+#include <cstring>
 #include <QDateTime>
 
 namespace fs = std::filesystem;
@@ -16,12 +17,20 @@ QmlBridge::QmlBridge(std::shared_ptr<core::storage::StorageEngine> storage,
                      std::shared_ptr<platform::IPlatformAdapter> platform,
                      std::shared_ptr<core::drivers::airy::AirySensorAdapter> airyAdapter,
                      std::shared_ptr<core::slam::airy::AiryLioBackend> airyBackend,
+                     std::shared_ptr<core::drivers::gemini::GeminiSensorAdapter> geminiAdapter,
+                     std::shared_ptr<core::slam::gemini::GeminiRgbdBackend> geminiBackend,
+                     std::shared_ptr<core::drivers::viture::VitureSensorAdapter> vitureAdapter,
+                     std::shared_ptr<core::slam::viture::VitureVioBackend> vitureBackend,
                      QObject *parent)
     : QObject(parent),
       storage_(std::move(storage)),
       platform_(std::move(platform)),
       airyAdapter_(std::move(airyAdapter)),
       airyBackend_(std::move(airyBackend)),
+      geminiAdapter_(std::move(geminiAdapter)),
+      geminiBackend_(std::move(geminiBackend)),
+      vitureAdapter_(std::move(vitureAdapter)),
+      vitureBackend_(std::move(vitureBackend)),
       timer_(new QTimer(this)),
       telemetryTimer_(new QTimer(this)) {
 
@@ -29,6 +38,18 @@ QmlBridge::QmlBridge(std::shared_ptr<core::storage::StorageEngine> storage,
         auto ipc = std::make_shared<core::drivers::airy::AiryIpcClient>("127.0.0.1", 9099);
         if (!airyAdapter_) airyAdapter_ = std::make_shared<core::drivers::airy::AirySensorAdapter>(ipc);
         if (!airyBackend_) airyBackend_ = std::make_shared<core::slam::airy::AiryLioBackend>(ipc);
+    }
+
+    if (!geminiAdapter_ || !geminiBackend_) {
+        auto g_ipc = std::make_shared<core::drivers::gemini::GeminiIpcClient>("127.0.0.1", 9100);
+        if (!geminiAdapter_) geminiAdapter_ = std::make_shared<core::drivers::gemini::GeminiSensorAdapter>(g_ipc);
+        if (!geminiBackend_) geminiBackend_ = std::make_shared<core::slam::gemini::GeminiRgbdBackend>(g_ipc);
+    }
+
+    if (!vitureAdapter_ || !vitureBackend_) {
+        auto v_ipc = std::make_shared<core::drivers::viture::VitureIpcClient>("127.0.0.1", 9101);
+        if (!vitureAdapter_) vitureAdapter_ = std::make_shared<core::drivers::viture::VitureSensorAdapter>(v_ipc);
+        if (!vitureBackend_) vitureBackend_ = std::make_shared<core::slam::viture::VitureVioBackend>(v_ipc);
     }
 
     connect(timer_, &QTimer::timeout, this, &QmlBridge::onTimerTick);
@@ -139,9 +160,13 @@ void QmlBridge::refreshData() {
             if (prof.profile_id().rfind("airy", 0) != std::string::npos || prof.profile_id().rfind("robosense", 0) != std::string::npos) {
                 item["validationNotice"] = "RoboSense Airy: Physical Hardware Qualified (DIFOP EEPROM Calibrated)";
             } else if (prof.profile_id().rfind("gemini", 0) != std::string::npos || prof.profile_id().rfind("orbbec", 0) != std::string::npos) {
-                item["validationNotice"] = "Gemini 336L: Draft Specification — Physical hardware qualification scheduled for M4";
+                item["validationNotice"] = "Orbbec Gemini 336L: Physical Hardware Qualified (Active Stereo RGB-D SLAM)";
             } else if (prof.profile_id().rfind("viture", 0) != std::string::npos) {
-                item["validationNotice"] = "VITURE Ultra: Experimental Specification — Physical qualification scheduled for M5";
+                if (prof.profile_status() == core::schemas::ProfileStatus::VALIDATED) {
+                    item["validationNotice"] = "VITURE Luma Ultra: Physical Hardware Qualified (Onboard 6-DoF VIO + Visual Point Mapping)";
+                } else {
+                    item["validationNotice"] = "VITURE Ultra: Experimental Specification — Physical qualification in progress";
+                }
             } else {
                 item["validationNotice"] = "Device Profile status: " + statusStr;
             }
@@ -304,6 +329,16 @@ bool QmlBridge::openProject(const QString& projectId) {
             }
         }
 
+        if (!hasMapData_) {
+            fs::path direct_pcd = proj_dir / "spatial_map.pcd";
+            if (!fs::exists(direct_pcd)) direct_pcd = proj_dir / "map.pcd";
+            if (fs::exists(direct_pcd)) {
+                loadMapPcd(direct_pcd.string(), mapPoints_);
+                pointsCaptured_ = mapPoints_.size();
+                hasMapData_ = (!mapPoints_.empty());
+            }
+        }
+
         emit projectNameChanged();
         emit projectIdChanged();
         emit projectDescriptionChanged();
@@ -361,19 +396,50 @@ bool QmlBridge::startCapture() {
     currentYaw_ = 0.0;
     hasMapData_ = false;
 
-    // Start RoboSense Airy driver and LIO SLAM
+    // Start appropriate sensor driver and SLAM backend based on selection
+    bool use_viture = selectedScannerId_.contains("viture", Qt::CaseInsensitive);
+    bool use_gemini = selectedScannerId_.contains("gemini", Qt::CaseInsensitive) ||
+                      selectedScannerId_.contains("orbbec", Qt::CaseInsensitive);
+    bool use_airy = selectedScannerId_.contains("airy", Qt::CaseInsensitive) ||
+                    selectedScannerId_.contains("robosense", Qt::CaseInsensitive);
+    bool use_scanr = selectedScannerId_.contains("dual", Qt::CaseInsensitive) ||
+                     selectedScannerId_.contains("scanr", Qt::CaseInsensitive);
+
     bool hardware_active = false;
-    if (airyBackend_ && airyAdapter_) {
-        if (airyAdapter_->start() && airyBackend_->start()) {
-            hardware_active = true;
-            AV_LOG_INFO("QmlBridge", "RoboSense Airy hardware & SLAM started successfully.");
+    QString live_status_desc = "STREAMING (STANDBY)";
+
+    if (use_viture) {
+        if (vitureAdapter_ && vitureBackend_) {
+            if (vitureAdapter_->start() && vitureBackend_->start()) {
+                hardware_active = true;
+                live_status_desc = "STREAMING (LIVE VITURE ULTRA)";
+                AV_LOG_INFO("QmlBridge", "VITURE Luma Ultra hardware & 6-DoF VIO started successfully.");
+            }
+        }
+    }
+    if (use_gemini || (use_scanr && !hardware_active)) {
+        if (geminiAdapter_ && geminiBackend_) {
+            if (geminiAdapter_->start() && geminiBackend_->start()) {
+                hardware_active = true;
+                live_status_desc = "STREAMING (LIVE GEMINI 336L)";
+                AV_LOG_INFO("QmlBridge", "Orbbec Gemini 336L hardware & RTAB-Map SLAM started successfully.");
+            }
+        }
+    }
+    if (use_airy || (use_scanr && !hardware_active)) {
+        if (airyBackend_ && airyAdapter_) {
+            if (airyAdapter_->start() && airyBackend_->start()) {
+                hardware_active = true;
+                live_status_desc = use_scanr ? "STREAMING (LIVE SCANR DUAL)" : "STREAMING (LIVE AIRY)";
+                AV_LOG_INFO("QmlBridge", "RoboSense Airy hardware & LIO SLAM started successfully.");
+            }
         }
     }
 
     isCapturing_ = true;
     canSave_ = false;
     captureState_ = "CAPTURING";
-    sensorStatus_ = hardware_active ? "STREAMING (LIVE AIRY)" : "STREAMING (STANDBY)";
+    sensorStatus_ = hardware_active ? live_status_desc : "STREAMING (STANDBY)";
     trackingStatus_ = hardware_active ? "INITIALIZING" : "TRACKING_OK";
 
     timer_->start(1000);
@@ -403,7 +469,25 @@ bool QmlBridge::stopCapture() {
     timer_->stop();
     telemetryTimer_->stop();
 
-    if (airyBackend_ && airyAdapter_) {
+    bool use_viture = selectedScannerId_.contains("viture", Qt::CaseInsensitive);
+    bool use_gemini = selectedScannerId_.contains("gemini", Qt::CaseInsensitive) ||
+                      selectedScannerId_.contains("orbbec", Qt::CaseInsensitive);
+
+    if (use_viture && vitureBackend_ && vitureAdapter_) {
+        vitureBackend_->stop();
+        vitureAdapter_->stop();
+        mapPoints_ = vitureBackend_->getMapPoints();
+        trajectory_ = vitureBackend_->getTrajectory();
+        pointsCaptured_ = mapPoints_.size();
+        hasMapData_ = (!mapPoints_.empty());
+    } else if (use_gemini && geminiBackend_ && geminiAdapter_) {
+        geminiBackend_->stop();
+        geminiAdapter_->stop();
+        mapPoints_ = geminiBackend_->getMapPoints();
+        trajectory_ = geminiBackend_->getTrajectory();
+        pointsCaptured_ = mapPoints_.size();
+        hasMapData_ = (!mapPoints_.empty());
+    } else if (airyBackend_ && airyAdapter_) {
         airyBackend_->stop();
         airyAdapter_->stop();
         mapPoints_ = airyBackend_->getMapPoints();
@@ -481,7 +565,15 @@ bool QmlBridge::saveCapture() {
 
         // 3. Save MapMetadata
         fs::path meta_path = cap_dir / "map_metadata.json";
-        core::schemas::MapMetadata meta = (airyBackend_) ? airyBackend_->getMapMetadata() : core::schemas::MapMetadata();
+        bool use_gemini = selectedScannerId_.contains("gemini", Qt::CaseInsensitive) ||
+                          selectedScannerId_.contains("orbbec", Qt::CaseInsensitive);
+
+        core::schemas::MapMetadata meta;
+        if (use_gemini && geminiBackend_) {
+            meta = geminiBackend_->getMapMetadata();
+        } else if (airyBackend_) {
+            meta = airyBackend_->getMapMetadata();
+        }
         meta.set_point_count(pointsCaptured_);
         meta.set_trajectory(trajectory_);
         std::ofstream mof(meta_path);
@@ -502,7 +594,14 @@ bool QmlBridge::saveCapture() {
         capture.set_trajectory_path(traj_path.string());
         capture.set_status("COMPLETED");
 
-        if (airyAdapter_) {
+        bool use_viture = selectedScannerId_.contains("viture", Qt::CaseInsensitive);
+        if (use_viture && vitureAdapter_) {
+            auto cal = vitureAdapter_->getCalibration();
+            if (!cal.empty()) capture.set_provenance(cal[0]);
+        } else if (use_gemini && geminiAdapter_) {
+            auto cal = geminiAdapter_->getCalibration();
+            if (!cal.empty()) capture.set_provenance(cal[0]);
+        } else if (airyAdapter_) {
             auto cal = airyAdapter_->getCalibration();
             if (!cal.empty()) capture.set_provenance(cal[0]);
         }
@@ -539,31 +638,93 @@ void QmlBridge::onTimerTick() {
 }
 
 void QmlBridge::onTelemetryTick() {
-    if (!isCapturing_ || !airyBackend_) return;
+    if (!isCapturing_) return;
 
-    if (airyBackend_->updateTelemetry()) {
-        currentPoseX_ = airyBackend_->getPose().position.x;
-        currentPoseY_ = airyBackend_->getPose().position.y;
-        currentPoseZ_ = airyBackend_->getPose().position.z;
-        currentYaw_ = airyBackend_->getCurrentYaw();
-        pointsCaptured_ = airyBackend_->getPointCount();
-        trackingStatus_ = QString::fromStdString(core::schemas::to_string(airyBackend_->getTrackingState()));
+    bool use_viture = selectedScannerId_.contains("viture", Qt::CaseInsensitive);
+    bool use_gemini = selectedScannerId_.contains("gemini", Qt::CaseInsensitive) ||
+                      selectedScannerId_.contains("orbbec", Qt::CaseInsensitive);
 
-        if (airyAdapter_) {
-            sensorStatus_ = QString::fromStdString(core::schemas::to_string(airyAdapter_->getStatus()));
+    if (use_viture && vitureBackend_) {
+        if (vitureBackend_->updateTelemetry()) {
+            currentPoseX_ = vitureBackend_->getPose().position.x;
+            currentPoseY_ = vitureBackend_->getPose().position.y;
+            currentPoseZ_ = vitureBackend_->getPose().position.z;
+            currentYaw_ = vitureBackend_->getCurrentYaw();
+            pointsCaptured_ = vitureBackend_->getPointCount();
+            trackingStatus_ = QString::fromStdString(core::schemas::to_string(vitureBackend_->getTrackingState()));
+
+            if (vitureAdapter_) {
+                sensorStatus_ = QString::fromStdString(core::schemas::to_string(vitureAdapter_->getStatus()));
+            }
+
+            vitureBackend_->fetchNewPoints();
+            mapPoints_ = vitureBackend_->getMapPoints();
+            trajectory_ = vitureBackend_->getTrajectory();
+            hasMapData_ = (!mapPoints_.empty());
+
+            emit poseChanged();
+            emit trackingStatusChanged();
+            emit sensorStatusChanged();
+            emit pointsCapturedChanged();
+            emit trajectoryChanged();
+            emit mapDataUpdated();
         }
+        return;
+    }
 
-        airyBackend_->fetchNewPoints();
-        mapPoints_ = airyBackend_->getMapPoints();
-        trajectory_ = airyBackend_->getTrajectory();
-        hasMapData_ = (!mapPoints_.empty());
+    if (use_gemini && geminiBackend_) {
+        if (geminiBackend_->updateTelemetry()) {
+            currentPoseX_ = geminiBackend_->getPose().position.x;
+            currentPoseY_ = geminiBackend_->getPose().position.y;
+            currentPoseZ_ = geminiBackend_->getPose().position.z;
+            currentYaw_ = geminiBackend_->getCurrentYaw();
+            pointsCaptured_ = geminiBackend_->getPointCount();
+            trackingStatus_ = QString::fromStdString(core::schemas::to_string(geminiBackend_->getTrackingState()));
 
-        emit poseChanged();
-        emit trackingStatusChanged();
-        emit sensorStatusChanged();
-        emit pointsCapturedChanged();
-        emit trajectoryChanged();
-        emit mapDataUpdated();
+            if (geminiAdapter_) {
+                sensorStatus_ = QString::fromStdString(core::schemas::to_string(geminiAdapter_->getStatus()));
+            }
+
+            geminiBackend_->fetchNewPoints();
+            mapPoints_ = geminiBackend_->getMapPoints();
+            trajectory_ = geminiBackend_->getTrajectory();
+            hasMapData_ = (!mapPoints_.empty());
+
+            emit poseChanged();
+            emit trackingStatusChanged();
+            emit sensorStatusChanged();
+            emit pointsCapturedChanged();
+            emit trajectoryChanged();
+            emit mapDataUpdated();
+        }
+        return;
+    }
+
+    if (airyBackend_) {
+        if (airyBackend_->updateTelemetry()) {
+            currentPoseX_ = airyBackend_->getPose().position.x;
+            currentPoseY_ = airyBackend_->getPose().position.y;
+            currentPoseZ_ = airyBackend_->getPose().position.z;
+            currentYaw_ = airyBackend_->getCurrentYaw();
+            pointsCaptured_ = airyBackend_->getPointCount();
+            trackingStatus_ = QString::fromStdString(core::schemas::to_string(airyBackend_->getTrackingState()));
+
+            if (airyAdapter_) {
+                sensorStatus_ = QString::fromStdString(core::schemas::to_string(airyAdapter_->getStatus()));
+            }
+
+            airyBackend_->fetchNewPoints();
+            mapPoints_ = airyBackend_->getMapPoints();
+            trajectory_ = airyBackend_->getTrajectory();
+            hasMapData_ = (!mapPoints_.empty());
+
+            emit poseChanged();
+            emit trackingStatusChanged();
+            emit sensorStatusChanged();
+            emit pointsCapturedChanged();
+            emit trajectoryChanged();
+            emit mapDataUpdated();
+        }
     }
 }
 
@@ -583,6 +744,10 @@ QVariantList QmlBridge::getDisplayPoints(int maxPoints) const {
         p.append(pt.y);
         p.append(pt.z);
         p.append(pt.intensity);
+        p.append(static_cast<int>(pt.r));
+        p.append(static_cast<int>(pt.g));
+        p.append(static_cast<int>(pt.b));
+        p.append(pt.has_color);
         list.append(QVariant::fromValue(p));
     }
     return list;
@@ -657,20 +822,49 @@ bool QmlBridge::loadSavedCapture(const QString& captureId) {
 
 void QmlBridge::saveMapPcd(const std::string& filepath, const std::vector<core::schemas::PointXYZI>& points) const {
     std::ofstream ofs(filepath);
-    ofs << "# .PCD v0.7 - Point Cloud Data file format\n"
-        << "VERSION 0.7\n"
-        << "FIELDS x y z intensity\n"
-        << "SIZE 4 4 4 4\n"
-        << "TYPE F F F F\n"
-        << "COUNT 1 1 1 1\n"
-        << "WIDTH " << points.size() << "\n"
-        << "HEIGHT 1\n"
-        << "VIEWPOINT 0 0 0 1 0 0 0\n"
-        << "POINTS " << points.size() << "\n"
-        << "DATA ascii\n";
+    if (!ofs.is_open()) return;
 
+    bool has_color = false;
     for (const auto& pt : points) {
-        ofs << pt.x << " " << pt.y << " " << pt.z << " " << pt.intensity << "\n";
+        if (pt.has_color) {
+            has_color = true;
+            break;
+        }
+    }
+
+    if (has_color) {
+        ofs << "# .PCD v0.7 - Point Cloud Data file format\n"
+            << "VERSION 0.7\n"
+            << "FIELDS x y z rgb intensity\n"
+            << "SIZE 4 4 4 4 4\n"
+            << "TYPE F F F U F\n"
+            << "COUNT 1 1 1 1 1\n"
+            << "WIDTH " << points.size() << "\n"
+            << "HEIGHT 1\n"
+            << "VIEWPOINT 0 0 0 1 0 0 0\n"
+            << "POINTS " << points.size() << "\n"
+            << "DATA ascii\n";
+
+        for (const auto& pt : points) {
+            uint32_t rgb_packed = ((uint32_t)pt.r << 16) | ((uint32_t)pt.g << 8) | ((uint32_t)pt.b);
+            ofs << pt.x << " " << pt.y << " " << pt.z << " " << rgb_packed << " " << pt.intensity << "\n";
+        }
+    } else {
+        ofs << "# .PCD v0.7 - Point Cloud Data file format\n"
+            << "VERSION 0.7\n"
+            << "FIELDS x y z intensity\n"
+            << "SIZE 4 4 4 4\n"
+            << "TYPE F F F F\n"
+            << "COUNT 1 1 1 1\n"
+            << "WIDTH " << points.size() << "\n"
+            << "HEIGHT 1\n"
+            << "VIEWPOINT 0 0 0 1 0 0 0\n"
+            << "POINTS " << points.size() << "\n"
+            << "DATA ascii\n";
+
+        for (const auto& pt : points) {
+            ofs << pt.x << " " << pt.y << " " << pt.z << " " << pt.intensity << "\n";
+        }
     }
     ofs.close();
 }
@@ -682,10 +876,15 @@ bool QmlBridge::loadMapPcd(const std::string& filepath, std::vector<core::schema
     out_points.clear();
     std::string line;
     bool in_data = false;
+    bool has_rgb_field = false;
 
     while (std::getline(ifs, line)) {
         if (!in_data) {
-            if (line.rfind("DATA", 0) == 0) {
+            if (line.rfind("FIELDS", 0) == 0) {
+                if (line.find("rgb") != std::string::npos || line.find("RGB") != std::string::npos) {
+                    has_rgb_field = true;
+                }
+            } else if (line.rfind("DATA", 0) == 0) {
                 in_data = true;
             }
             continue;
@@ -693,11 +892,39 @@ bool QmlBridge::loadMapPcd(const std::string& filepath, std::vector<core::schema
 
         std::istringstream iss(line);
         core::schemas::PointXYZI pt;
-        if (iss >> pt.x >> pt.y >> pt.z) {
-            if (!(iss >> pt.intensity)) {
-                pt.intensity = 1.0f;
+        if (has_rgb_field) {
+            std::string rgb_token;
+            if (iss >> pt.x >> pt.y >> pt.z >> rgb_token) {
+                uint32_t rgb_packed = 0;
+                if (rgb_token.find('.') != std::string::npos || 
+                    rgb_token.find('e') != std::string::npos || 
+                    rgb_token.find('E') != std::string::npos) {
+                    double d = std::strtod(rgb_token.c_str(), nullptr);
+                    float rgb_f = static_cast<float>(d);
+                    std::memcpy(&rgb_packed, &rgb_f, sizeof(uint32_t));
+                } else {
+                    rgb_packed = static_cast<uint32_t>(std::strtoul(rgb_token.c_str(), nullptr, 10));
+                }
+                pt.r = static_cast<uint8_t>((rgb_packed >> 16) & 0xFF);
+                pt.g = static_cast<uint8_t>((rgb_packed >> 8) & 0xFF);
+                pt.b = static_cast<uint8_t>(rgb_packed & 0xFF);
+                pt.has_color = true;
+                if (!(iss >> pt.intensity)) {
+                    pt.intensity = 1.0f;
+                }
+                out_points.push_back(pt);
             }
-            out_points.push_back(pt);
+        } else {
+            if (iss >> pt.x >> pt.y >> pt.z) {
+                if (!(iss >> pt.intensity)) {
+                    pt.intensity = 1.0f;
+                }
+                pt.r = 255;
+                pt.g = 255;
+                pt.b = 255;
+                pt.has_color = false;
+                out_points.push_back(pt);
+            }
         }
     }
     return true;
@@ -777,8 +1004,8 @@ void QmlBridge::setPreset3D(const QString& preset) {
 
 // 2D Camera Controls
 void QmlBridge::pan2D(qreal deltaX, qreal deltaY) {
-    pan2DX_ -= deltaX / zoom2D_;
-    pan2DY_ += deltaY / zoom2D_;
+    pan2DX_ += deltaY / zoom2D_;
+    pan2DY_ += deltaX / zoom2D_;
     emit cam2DChanged();
 }
 

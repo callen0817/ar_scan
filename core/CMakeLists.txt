@@ -13,6 +13,12 @@ add_library(av_core STATIC
     drivers/airy/airy_ipc_client.cpp
     drivers/airy/airy_sensor_adapter.cpp
     slam/airy/airy_lio_backend.cpp
+    drivers/gemini/gemini_ipc_client.cpp
+    drivers/gemini/gemini_sensor_adapter.cpp
+    slam/gemini/gemini_rgbd_backend.cpp
+    drivers/viture/viture_ipc_client.cpp
+    drivers/viture/viture_sensor_adapter.cpp
+    slam/viture/viture_vio_backend.cpp
 )
 
 target_include_directories(av_core PUBLIC
