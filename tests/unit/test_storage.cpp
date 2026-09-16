@@ -65,6 +65,18 @@ int main() {
     assert(loaded_prof.profile_id() == "test_prof_01");
     assert(loaded_prof.manufacturer() == "ManufacturerX");
 
+    // 4b. Draft Profile Persistence
+    schemas::DeviceProfile draft_prof;
+    draft_prof.set_profile_id("test_draft_01");
+    draft_prof.set_manufacturer("DraftManufacturer");
+    draft_prof.set_profile_status(schemas::ProfileStatus::DRAFT);
+    assert(engine.saveDeviceProfile(draft_prof));
+
+    schemas::DeviceProfile loaded_draft;
+    assert(engine.loadDeviceProfile("test_draft_01", loaded_draft));
+    assert(loaded_draft.profile_id() == "test_draft_01");
+    assert(loaded_draft.profile_status() == schemas::ProfileStatus::DRAFT);
+
     // 5. Scanner Config Persistence
     schemas::ScannerConfig cfg("cfg_test", "Test Configuration", "node_01");
     assert(engine.saveScannerConfig(cfg));

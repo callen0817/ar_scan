@@ -65,24 +65,27 @@ inline CalibrationSource calibration_source_from_string(const std::string& str) 
 }
 
 enum class ProfileStatus {
-    VALIDATED,
+    DRAFT,
     EXPERIMENTAL,
+    VALIDATED,
     REJECTED
 };
 
 inline std::string to_string(ProfileStatus status) {
     switch (status) {
-        case ProfileStatus::VALIDATED: return "VALIDATED";
+        case ProfileStatus::DRAFT: return "DRAFT";
         case ProfileStatus::EXPERIMENTAL: return "EXPERIMENTAL";
+        case ProfileStatus::VALIDATED: return "VALIDATED";
         case ProfileStatus::REJECTED: return "REJECTED";
-        default: return "EXPERIMENTAL";
+        default: return "DRAFT";
     }
 }
 
 inline ProfileStatus profile_status_from_string(const std::string& str) {
     if (str == "VALIDATED") return ProfileStatus::VALIDATED;
+    if (str == "EXPERIMENTAL") return ProfileStatus::EXPERIMENTAL;
     if (str == "REJECTED") return ProfileStatus::REJECTED;
-    return ProfileStatus::EXPERIMENTAL;
+    return ProfileStatus::DRAFT;
 }
 
 enum class SensorRelationshipType {

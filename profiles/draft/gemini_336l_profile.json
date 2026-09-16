@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "profile_id": "orbbec_gemini_336l_01",
-  "profile_version": "1.0.0",
+  "profile_version": "0.1.0",
   "manufacturer": "Orbbec",
   "model": "Gemini 336L",
   "device_family": "ACTIVE_STEREO_RGBD_CAMERA",
-  "profile_status": "VALIDATED",
+  "profile_status": "DRAFT",
   "hardware_revision": "HW_1.0",
   "firmware": "1.2.34",
   "capabilities": [
@@ -82,11 +82,11 @@
       "schema_version": 1,
       "value": "DEVICE_FACTORY_FLASH",
       "source": "DEVICE_FACTORY",
-      "confidence": 0.98,
+      "confidence": 0.5,
       "device_serial": "OB-336L-77412",
       "firmware": "1.2.34",
-      "evidence": "Factory calibration stored in internal camera flash memory",
-      "validated": true
+      "evidence": "Factory calibration stored in internal camera flash; pending M4 live qualification",
+      "validated": false
     }
   ],
   "slam_family": "RGBD_SLAM",
@@ -108,17 +108,18 @@
     "point_type": "XYZRGB"
   },
   "validation_results": {
+    "status": "UNVALIDATED",
     "tested_host": "Jetson Orin NX 16GB",
-    "status": "PASS"
+    "target_milestone": "M4_GEMINI_336L_QUALIFICATION"
   },
   "provenance": {
     "schema_version": 1,
-    "value": "OFFICIAL_INTEGRATION",
+    "value": "M1_INITIAL_DRAFT_PROFILE",
     "source": "OFFICIAL_SDK",
-    "confidence": 1.0,
+    "confidence": 0.5,
     "device_serial": "OB-336L-77412",
     "firmware": "1.2.34",
-    "evidence": "Orbbec SDK integration and stream validation",
-    "validated": true
+    "evidence": "Initial draft specification pending M4 physical hardware qualification",
+    "validated": false
   }
 }

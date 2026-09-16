@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "profile_id": "robosense_airy_01",
-  "profile_version": "1.0.0",
+  "profile_version": "0.1.0",
   "manufacturer": "RoboSense",
   "model": "RS-Airy",
   "device_family": "SOLID_STATE_MECHANICAL_LIDAR",
-  "profile_status": "VALIDATED",
+  "profile_status": "DRAFT",
   "hardware_revision": "REV_B",
   "firmware": "3.1.20",
   "capabilities": [
@@ -61,11 +61,11 @@
       "schema_version": 1,
       "value": "FACTORY_EEPROM_CALIBRATION",
       "source": "DEVICE_FACTORY",
-      "confidence": 0.99,
+      "confidence": 0.5,
       "device_serial": "AIRY-2024-99812",
       "firmware": "3.1.20",
-      "evidence": "Factory calibration validated against calibration targets",
-      "validated": true
+      "evidence": "Factory calibration stored in EEPROM; pending M3 live qualification",
+      "validated": false
     }
   ],
   "slam_family": "LIO",
@@ -89,18 +89,18 @@
     "point_type": "XYZI"
   },
   "validation_results": {
+    "status": "UNVALIDATED",
     "tested_host": "Jetson Orin NX 16GB",
-    "packet_drop_rate": 0.0,
-    "status": "PASS"
+    "target_milestone": "M3_ROBOSENSE_AIRY_QUALIFICATION"
   },
   "provenance": {
     "schema_version": 1,
-    "value": "OFFICIAL_INTEGRATION",
+    "value": "M1_INITIAL_DRAFT_PROFILE",
     "source": "OFFICIAL_DRIVER",
-    "confidence": 1.0,
+    "confidence": 0.5,
     "device_serial": "AIRY-2024-99812",
     "firmware": "3.1.20",
-    "evidence": "RoboSense official driver integration and live capture verification",
-    "validated": true
+    "evidence": "Initial draft specification pending M3 physical hardware qualification",
+    "validated": false
   }
 }

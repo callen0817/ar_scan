@@ -113,13 +113,13 @@ av_scan/
 │       ├── linux_platform.hpp                      # Linux/Jetson platform adapter
 │       └── linux_platform.cpp                      # Jetson hardware & metrics detector
 ├── profiles/
-│   ├── experimental/
-│   │   └── viture_ultra_profile.json               # VITURE Ultra XR glasses profile
-│   └── validated/
-│       ├── airy_profile.json                       # RoboSense Airy validated profile
-│       └── gemini_336l_profile.json                # Orbbec Gemini 336L validated profile
+│   ├── draft/
+│   │   ├── airy_profile.json                       # RoboSense Airy initial draft profile (pending M3 qualification)
+│   │   └── gemini_336l_profile.json                # Orbbec Gemini 336L initial draft profile (pending M4 qualification)
+│   └── experimental/
+│       └── viture_ultra_profile.json               # VITURE Ultra XR glasses profile
 ├── scanner_configs/
-│   └── default_orin_dual.json                      # Orin NX dual scanner (Airy + Gemini 336L)
+│   └── default_orin_dual.json                      # Orin NX dual scanner (Airy + Gemini 336L, extrinsic UNKNOWN)
 ├── scripts/
 │   └── setup_thirdparty.sh                         # Non-root automated Qt Quick isolation script
 └── tests/
@@ -240,9 +240,29 @@ $ ./build/app/av_scan --test-mode --headless
 
 ---
 
-## 10. Milestone Status & Transition Gate
+## 10. Milestone Roadmap & Transition Gate
+
+The active AV Scan milestone sequence is:
+
+- **M1 — Foundation** *(Complete)*
+- **M2 — GUI** *(Next Milestone)*
+- **M3 — RoboSense Airy** *(Airy Profile Hardware Qualification)*
+- **M4 — Gemini 336L** *(Gemini 336L Profile Hardware Qualification)*
+- **M5 — VITURE Ultra**
+- **[MVP COMPLETE AFTER M5]**
+- **M6 — Multi-Sensor / One Scanner Node**
+- **M7 — Automatic Rigid Sensor Calibration** *(Estimates/validates Airy↔Gemini transform from observations)*
+- **M8 — Modular Scanner Fusion**
+- **M9 — Post-Capture Collaborative Merge**
+- **M10 — Multi-Node Session**
+- **M11 — Real-Time Collaborative Mapping**
+- **M12 — Cleanup / Advanced Processing**
+- **M13 — Automatic Device Profile Generation**
+- **M14 — Genuinely Unknown Sensor**
+- **M15 — Desktop Portability**
+- **M16 — iOS**
 
 Milestone 1 is **COMPLETE**. In accordance with the project instructions:
 > *"Every milestone is a hard gate... STOP. Do not continue automatically. Wait for explicit user approval."*
 
-Execution is paused. Awaiting explicit user approval before proceeding to **Milestone 2 (M2 — Device Profile Architecture & Sensor Interface Abstraction)**.
+Execution is paused. Awaiting explicit user approval before beginning **Milestone 2 (M2 — GUI)**.

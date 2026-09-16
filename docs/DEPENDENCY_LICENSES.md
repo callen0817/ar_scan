@@ -34,7 +34,7 @@ Categories of interest:
 
 | Component | Target Milestone | License | Commercial Compatibility Status | Architectural Strategy |
 | :--- | :--- | :--- | :--- | :--- |
-| **PCL (Point Cloud Library)** | M2, M3, M4 | **BSD-3-Clause** | **Approved (Green)** | Fully permissive commercial license. Used for filtering, normals, and cloud registration. |
+| **PCL (Point Cloud Library)** | M3, M4, M5 | **BSD-3-Clause** | **Approved (Green)** | Fully permissive commercial license. Used for filtering, normals, and cloud registration. |
 | **GTSAM** | M3, M4, M7 | **BSD-3-Clause** | **Approved (Green)** | Permissive Georgia Tech license for factor-graph SLAM and loop closures. |
 | **OpenCV** | M4, M5 | **Apache 2.0** | **Approved (Green)** | Permissive license for image processing, camera models, and reprojection. |
 | **RoboSense `rslidar_sdk`** | M3 | **BSD-3-Clause** | **Approved (Green)** | Official RoboSense driver license permits commercial redistribution and embedding. |

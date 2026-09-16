@@ -198,9 +198,11 @@ bool StorageEngine::saveDeviceProfile(const schemas::DeviceProfile& profile) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (profile.profile_id().empty()) return false;
 
-    std::string subfolder = "experimental";
+    std::string subfolder = "draft";
     if (profile.profile_status() == schemas::ProfileStatus::VALIDATED) {
         subfolder = "validated";
+    } else if (profile.profile_status() == schemas::ProfileStatus::EXPERIMENTAL) {
+        subfolder = "experimental";
     } else if (profile.profile_status() == schemas::ProfileStatus::REJECTED) {
         subfolder = "rejected";
     }
@@ -211,7 +213,7 @@ bool StorageEngine::saveDeviceProfile(const schemas::DeviceProfile& profile) {
 
 bool StorageEngine::loadDeviceProfile(const std::string& profile_id, schemas::DeviceProfile& out_profile) {
     std::lock_guard<std::mutex> lock(mutex_);
-    const std::vector<std::string> subfolders = {"validated", "experimental", "rejected"};
+    const std::vector<std::string> subfolders = {"draft", "experimental", "validated", "rejected"};
     for (const auto& sub : subfolders) {
         fs::path p = root_path_ / "profiles" / sub / (profile_id + ".json");
         nlohmann::json j;
@@ -226,7 +228,7 @@ bool StorageEngine::loadDeviceProfile(const std::string& profile_id, schemas::De
 std::vector<std::string> StorageEngine::listDeviceProfiles() const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<std::string> profiles;
-    const std::vector<std::string> subfolders = {"validated", "experimental", "rejected"};
+    const std::vector<std::string> subfolders = {"draft", "experimental", "validated", "rejected"};
     for (const auto& sub : subfolders) {
         fs::path dir = root_path_ / "profiles" / sub;
         if (fs::exists(dir)) {
