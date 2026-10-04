@@ -19,6 +19,8 @@ private:
 
     bool is_jetson_{false};
     std::string jetson_model_;
+    uint64_t prev_cpu_total_{0};
+    uint64_t prev_cpu_idle_{0};
 };
 
 } // namespace av::platform::linux_os

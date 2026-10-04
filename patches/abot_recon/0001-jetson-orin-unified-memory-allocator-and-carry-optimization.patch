@@ -1,0 +1,44 @@
+diff --git a/abot_recon/modeling/streaming/kv_state.py b/abot_recon/modeling/streaming/kv_state.py
+index 9588447..a0c8a22 100644
+--- a/abot_recon/modeling/streaming/kv_state.py
++++ b/abot_recon/modeling/streaming/kv_state.py
+@@ -120,7 +120,23 @@ class StreamingKVState:
+         )
+ 
+     def clone_buffers(self) -> "StreamingKVState":
+-        return deepcopy(self)
++        return StreamingKVState(
++            num_reference_frames=int(self.num_reference_frames),
++            local_window_frames=int(self.local_window_frames),
++            num_summary_tokens=int(self.num_summary_tokens),
++            tpf=int(self.tpf),
++            reference_pk=self.reference_pk.clone(),
++            reference_pv=self.reference_pv.clone(),
++            reference_count=int(self.reference_count),
++            summary_pk=self.summary_pk.clone(),
++            summary_pv=self.summary_pv.clone(),
++            window_pk=self.window_pk.clone(),
++            window_pv=self.window_pv.clone(),
++            window_count=int(self.window_count),
++            total_frames_seen=int(self.total_frames_seen),
++            max_summary_frames=int(self.max_summary_frames),
++            summary_frame_base=int(self.summary_frame_base),
++        )
+ 
+     def _first_stored_summary_fk(self, T_q: int) -> int:
+         ka = int(self.num_reference_frames)
+diff --git a/abot_recon/modeling/streaming/network.py b/abot_recon/modeling/streaming/network.py
+index 222d0a7..4ed2755 100644
+--- a/abot_recon/modeling/streaming/network.py
++++ b/abot_recon/modeling/streaming/network.py
+@@ -230,8 +230,8 @@ class ABotReconNetwork(Pi3):
+                     raise ValueError(
+                         "StreamingKVState requires memory_mode=streaming"
+                     )
+-                # append 已在 stream_chunk_forward 内完成；此处仅 detach。
+-                out.append(kv.clone_buffers())
++                # append 已在 stream_chunk_forward 内完成；此处仅保留 carry 状态。
++                out.append(kv)
+                 continue
+             pk, pv = kv[0], kv[1]
+             pk = pk.contiguous()

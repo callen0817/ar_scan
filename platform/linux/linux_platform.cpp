@@ -84,6 +84,38 @@ HostSystemMetrics LinuxPlatformAdapter::getHostMetrics() {
         m.available_disk_bytes = static_cast<uint64_t>(vfs.f_bavail) * vfs.f_frsize;
     }
 
+    // Read CPU utilization from /proc/stat
+    std::ifstream stat_file("/proc/stat");
+    if (stat_file.is_open()) {
+        std::string cpu_label;
+        uint64_t user = 0, nice = 0, system = 0, idle = 0, iowait = 0, irq = 0, softirq = 0, steal = 0;
+        if (stat_file >> cpu_label >> user >> nice >> system >> idle >> iowait >> irq >> softirq >> steal) {
+            uint64_t idle_time = idle + iowait;
+            uint64_t total_time = user + nice + system + idle + iowait + irq + softirq + steal;
+            if (prev_cpu_total_ > 0 && total_time > prev_cpu_total_) {
+                uint64_t total_diff = total_time - prev_cpu_total_;
+                uint64_t idle_diff = idle_time - prev_cpu_idle_;
+                if (total_diff > 0) {
+                    double util = 100.0 * (1.0 - static_cast<double>(idle_diff) / static_cast<double>(total_diff));
+                    if (util < 0.0) util = 0.0;
+                    if (util > 100.0) util = 100.0;
+                    m.cpu_utilization_percent = util;
+                }
+            }
+            prev_cpu_total_ = total_time;
+            prev_cpu_idle_ = idle_time;
+        }
+    }
+
+    // Read Jetson Orin Nano GPU load from sysfs (returns 0-1000 = per-mille)
+    std::ifstream gpu_load("/sys/devices/platform/bus@0/17000000.gpu/load");
+    if (gpu_load.is_open()) {
+        double raw_load = 0;
+        if (gpu_load >> raw_load) {
+            m.gpu_utilization_percent = raw_load / 10.0;
+        }
+    }
+
     return m;
 }
 

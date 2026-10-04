@@ -161,6 +161,128 @@ int main(int argc, char* argv[]) {
     // Double-save rejected
     assert(!bridge->saveCapture());
 
+    // 7. Milestone 14: Hardware Discovery and Autonomous Profile Onboarding
+    std::cout << "  Testing hardware discovery and profiling methods..." << std::endl;
+    bridge->refreshDiscovery();
+    QVariantList devs = bridge->discoveredPhysicalDevices();
+    std::cout << "    Discovered " << devs.size() << " physical hardware device(s)." << std::endl;
+    assert(!devs.isEmpty());
+    assert(!bridge->discoveryStatusText().isEmpty());
+
+    bool found_cam = false;
+    QString target_id;
+    for (const auto& d : devs) {
+        QVariantMap m = d.toMap();
+        if (m["busType"].toString() == "USB" || m["transport"].toString().contains("USB") || m["interfaces"].toList().size() > 0) {
+            found_cam = true;
+            target_id = m["id"].toString();
+            break;
+        }
+    }
+
+    if (found_cam) {
+        std::cout << "    Interrogating physical device and creating profile for: " << target_id.toStdString() << std::endl;
+        QVariantMap res = bridge->createProfileForDevice(target_id);
+        assert(res["success"].toBool());
+        assert(res["profileStatus"].toString() == "EXPERIMENTAL");
+        assert(res["compatibleReconstruction"].toString() == "Monocular Neural Reconstruction");
+        assert(res["selectedBackend"].toString() == "LingBot-Map");
+        assert(res["scaleStatus"].toString() == "MODEL_ESTIMATED / NOT INDEPENDENTLY VERIFIED");
+        assert(res["nativeDepth"].toString() == "NO");
+        assert(res["nativeImu"].toString() == "NO");
+        assert(res["nativeGeometry"].toString() == "NO");
+
+        // Now test selecting profile for capture
+        QString pid = res["profileId"].toString();
+        bridge->selectProfileForCapture(pid);
+        assert(bridge->selectedScannerId() == pid);
+
+        // Discovered devices should now mark it as PROFILED
+        bridge->refreshDiscovery();
+        QVariantList updated_devs = bridge->discoveredPhysicalDevices();
+        for (const auto& d : updated_devs) {
+            QVariantMap m = d.toMap();
+            if (m["id"].toString() == target_id) {
+                assert(m["profileStatus"].toString() == "PROFILED");
+                assert(m["existingProfileId"].toString() == pid);
+                break;
+            }
+        }
+
+        // Also test profiling SenseCAP Watcher if discovered on host
+        for (const auto& dev_entry : devs) {
+            QVariantMap m = dev_entry.toMap();
+            if (m["id"].toString().contains("1a86_55d2") || m["name"].toString().contains("Watcher")) {
+                QString watcher_id = m["id"].toString();
+                std::cout << "    Interrogating SenseCAP Watcher and creating profile for: " << watcher_id.toStdString() << std::endl;
+                QVariantMap w_res = bridge->createProfileForDevice(watcher_id);
+                assert(w_res["success"].toBool());
+                assert(w_res["profileStatus"].toString() == "EXPERIMENTAL");
+                assert(w_res["compatibleReconstruction"].toString() == "UNKNOWN");
+                assert(w_res["selectedBackend"].toString() == "NONE");
+                assert(w_res["scaleStatus"].toString() == "NO_RECONSTRUCTION_BACKEND_MATCHED");
+                assert(w_res["nativeDepth"].toString() == "NO");
+                assert(w_res["nativeImu"].toString() == "NO");
+                assert(w_res["nativeGeometry"].toString() == "NO");
+                assert(w_res["nativeCapabilities"].toString().contains("Serial Control"));
+                std::cout << "    SenseCAP Watcher profile generated successfully: " << w_res["profileId"].toString().toStdString() << std::endl;
+                break;
+            }
+        }
+    }
+
+    // 8. Universal Sensor Ecosystem Catalog & Template Profile Generation
+    std::cout << "  Testing Ecosystem Catalog and Template Profile Generation..." << std::endl;
+    assert(bridge->ecosystemModelCount() >= 80);
+    assert(bridge->ecosystemVendorCount() >= 15);
+
+    QStringList vendors = bridge->getEcosystemManufacturers();
+    assert(vendors.contains("Ouster"));
+    assert(vendors.contains("RoboSense"));
+    assert(vendors.contains("Hesai"));
+    assert(vendors.contains("Orbbec"));
+
+    QStringList ouster_types = bridge->getSensorTypesForManufacturer("Ouster");
+    assert(ouster_types.contains("LiDAR"));
+
+    QVariantList hesai_lidars = bridge->getEcosystemModels("Hesai", "LiDAR", "");
+    assert(!hesai_lidars.isEmpty());
+
+    QVariantList search_res = bridge->getEcosystemModels("", "", "Pandar");
+    assert(!search_res.isEmpty());
+
+    // Check Model Details & Provenance
+    QVariantMap details = bridge->getModelDetails("ouster_os1_rev8_rgb");
+    assert(details["modelId"].toString() == "ouster_os1_rev8_rgb");
+    assert(details["vendor"].toString() == "Ouster");
+    assert(details["hasRgb"].toBool() == true);
+    assert(details["hasLidar"].toBool() == true);
+    assert(details["catKnowledge"].toBool() == true);
+    assert(!details["docUrl"].toString().isEmpty());
+
+    // Generate Template Profile
+    QVariantMap t_res = bridge->createTemplateProfileFromModel("ouster_os1_rev8_rgb");
+    assert(t_res["success"].toBool() == true);
+    assert(t_res["profileId"].toString() == "ouster_os1_rev8_rgb_template");
+    assert(t_res["profileStatus"].toString() == "EXPERIMENTAL");
+    assert(t_res["calibrationSource"].toString() == "OFFICIAL_DOCUMENTATION");
+    assert(!t_res["isMetricScaleValidated"].toBool());
+
+    // Verify it appeared in project profiles
+    QVariantList profiles = bridge->getAvailableDeviceProfiles();
+    bool found_template = false;
+    for (const auto& p : profiles) {
+        if (p.toMap()["profileId"].toString() == "ouster_os1_rev8_rgb_template") {
+            found_template = true;
+            break;
+        }
+    }
+    if (!found_template) {
+        std::cerr << "Failed to find seeded template profile in available profiles!" << std::endl;
+        return 1;
+    }
+    std::cout << "    Ecosystem catalog & template profile generation verified." << std::endl;
+
     // Clean up
     fs::remove_all(test_dir);
     std::cout << ">>> All GUI Bridge Unit Tests PASSED <<<" << std::endl;

@@ -1,0 +1,75 @@
+{
+  "calibration_sources": [],
+  "capabilities": [
+    "USB_SERIAL_DEVICE",
+    "CDC_ACM_COMMUNICATION"
+  ],
+  "coordinate_frames": {
+    "body_frame": "base_link"
+  },
+  "device_family": "EDGE_AI_VISION_AGENT",
+  "driver": "cdc_acm",
+  "firmware": "cdc_acm",
+  "hardware_revision": "REV_1.0",
+  "internal_extrinsics": [
+    {}
+  ],
+  "intrinsics": {},
+  "manufacturer": "Seeed Studio",
+  "model": "SenseCAP Watcher",
+  "output_contract": {
+    "frequency_hz": 0.0,
+    "point_type": "NONE",
+    "scale_classification": {
+      "geometry_source": "NONE",
+      "metric_constraint": "NONE",
+      "scale_status": "NO_RECONSTRUCTION_BACKEND_MATCHED"
+    },
+    "target_frame": "canonical_av"
+  },
+  "preprocessing": [
+    {}
+  ],
+  "profile_id": "seeed_sensecap_watcher_56D5018737",
+  "profile_status": "EXPERIMENTAL",
+  "profile_version": "1.0.0",
+  "provenance": {
+    "confidence": 0.0,
+    "device_serial": "56D5018737",
+    "evidence": "USB CDC-ACM serial interrogation of /dev/ttyACM0 (SenseCAP Watcher OV5647 5MP sensor)",
+    "firmware": "cdc_acm",
+    "schema_version": 1,
+    "source": "DEVICE_FACTORY",
+    "validated": false,
+    "value": "AUTONOMOUS_INTERROGATION"
+  },
+  "schema_version": 1,
+  "sdk": "SenseCraft / Himax WiseEye2 HX6538",
+  "slam_backend": "",
+  "slam_family": "UNKNOWN",
+  "slam_parameters": null,
+  "streams": [
+    {
+      "enabled": true,
+      "format": "RAW_BYTE_STREAM",
+      "name": "serial_data_0",
+      "nominal_rate_hz": 0.0,
+      "type": "SERIAL"
+    },
+    {
+      "enabled": true,
+      "format": "RAW_BYTE_STREAM",
+      "name": "serial_data_1",
+      "nominal_rate_hz": 0.0,
+      "type": "SERIAL"
+    }
+  ],
+  "synchronization": "NONE",
+  "timestamp_sources": [
+    "HOST_MONOTONIC"
+  ],
+  "transport": "USB_SERIAL_CDC_ACM",
+  "validation_results": [
+    {}
+  ]
+}

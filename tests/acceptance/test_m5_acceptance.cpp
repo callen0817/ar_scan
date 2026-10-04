@@ -94,8 +94,8 @@ int main(int argc, char* argv[]) {
     CHECK(!calib.empty(), "Calibration provenance must not be empty");
     CHECK(calib[0].source() == schemas::CalibrationSource::DEVICE_FACTORY, "Source must be DEVICE_FACTORY");
     CHECK(calib[0].value() == "FACTORY_EEPROM", "Value must be FACTORY_EEPROM");
-    CHECK(calib[0].device_serial() == "VITURE-35CA-1104", "Device serial must be VITURE-35CA-1104");
-    CHECK(calib[0].firmware() == "1.0.12", "Firmware must be 1.0.12");
+    CHECK(calib[0].device_serial() == "P6SPIH54101350", "Device serial must be P6SPIH54101350");
+    CHECK(calib[0].firmware() == "0.1.0.7", "Firmware must be 0.1.0.7");
     std::cout << "  ✓ Provenance Verified: " << calib[0].device_serial() << " (FW: " << calib[0].firmware() << ")" << std::endl;
 
     // ---------------------------------------------------------

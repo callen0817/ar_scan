@@ -4,6 +4,7 @@
 #include "capture.hpp"
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include <cstdint>
 #include <nlohmann/json.hpp>
 
@@ -28,10 +29,18 @@ public:
     const std::string& session_id() const noexcept { return session_id_; }
     const std::string& project_id() const noexcept { return project_id_; }
     const std::string& name() const noexcept { return name_; }
+
+    const std::string& coordinator_node_uuid() const noexcept { return coordinator_node_uuid_; }
+    void set_coordinator_node_uuid(const std::string& uuid) { coordinator_node_uuid_ = uuid; }
+
     uint64_t start_time_ns() const noexcept { return start_time_ns_; }
     uint64_t end_time_ns() const noexcept { return end_time_ns_; }
+    uint64_t requested_start_time_ns() const noexcept { return requested_start_time_ns_; }
+    uint64_t requested_end_time_ns() const noexcept { return requested_end_time_ns_; }
+
     SessionStatus status() const noexcept { return status_; }
     const std::vector<std::string>& scanner_nodes() const noexcept { return scanner_nodes_; }
+    const std::unordered_map<std::string, std::string>& node_session_roles() const noexcept { return node_session_roles_; }
     const std::vector<Capture>& captures() const noexcept { return captures_; }
 
     void set_session_id(const std::string& id) { session_id_ = id; }
@@ -39,8 +48,22 @@ public:
     void set_name(const std::string& name) { name_ = name; }
     void set_start_time_ns(uint64_t t) { start_time_ns_ = t; }
     void set_end_time_ns(uint64_t t) { end_time_ns_ = t; }
+    void set_requested_start_time_ns(uint64_t t) { requested_start_time_ns_ = t; }
+    void set_requested_end_time_ns(uint64_t t) { requested_end_time_ns_ = t; }
     void set_status(SessionStatus st) { status_ = st; }
-    void add_scanner_node(const std::string& node_id) { scanner_nodes_.push_back(node_id); }
+
+    void add_scanner_node(const std::string& node_id, const std::string& role = "SESSION_PARTICIPANT") {
+        for (const auto& n : scanner_nodes_) {
+            if (n == node_id) return;
+        }
+        scanner_nodes_.push_back(node_id);
+        node_session_roles_[node_id] = role;
+    }
+
+    void set_node_role(const std::string& node_id, const std::string& role) {
+        node_session_roles_[node_id] = role;
+    }
+
     void add_capture(const Capture& cap) { captures_.push_back(cap); }
 
     nlohmann::json to_json() const;
@@ -51,10 +74,14 @@ private:
     std::string session_id_;
     std::string project_id_;
     std::string name_;
+    std::string coordinator_node_uuid_;
+    uint64_t requested_start_time_ns_{0};
     uint64_t start_time_ns_{0};
+    uint64_t requested_end_time_ns_{0};
     uint64_t end_time_ns_{0};
     SessionStatus status_{SessionStatus::INITIALIZING};
     std::vector<std::string> scanner_nodes_;
+    std::unordered_map<std::string, std::string> node_session_roles_;
     std::vector<Capture> captures_;
 };
 

@@ -39,6 +39,8 @@ public:
     std::vector<schemas::PointXYZI> getMapPoints() const;
     double getCurrentYaw() const;
     uint64_t getPointCount() const;
+    double getAcquisitionRate() const;
+    double getSlamRate() const;
 
 private:
     std::shared_ptr<drivers::airy::AiryIpcClient> ipc_client_;
@@ -53,6 +55,8 @@ private:
     std::vector<schemas::Pose3D> trajectory_;
     std::vector<schemas::PointXYZI> map_points_;
     uint64_t point_count_{0};
+    double acquisition_rate_hz_{0.0};
+    double slam_rate_hz_{0.0};
 };
 
 } // namespace av::core::slam::airy

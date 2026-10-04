@@ -224,6 +224,8 @@ bool GeminiIpcClient::getTelemetry(GeminiTelemetry& out_telem) {
         out_telem.trajectory_count = j.value("trajectory_count", 0ULL);
         out_telem.feature_count = j.value("feature_count", 0);
         out_telem.feature_quality = j.value("feature_quality", 0.0);
+        out_telem.acquisition_rate_hz = j.value("acquisition_rate_hz", 0.0);
+        out_telem.slam_rate_hz = j.value("slam_rate_hz", 0.0);
 
         if (j.contains("current_pose")) {
             auto cp = j["current_pose"];

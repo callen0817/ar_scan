@@ -228,4 +228,108 @@ struct Transform3D {
     }
 };
 
+enum class NodePlatform {
+    LINUX_ARM64,
+    LINUX_X64,
+    WINDOWS_X64,
+    MACOS_ARM64,
+    MACOS_X64,
+    IOS_ARM64,
+    UNKNOWN
+};
+
+inline std::string to_string(NodePlatform p) {
+    switch (p) {
+        case NodePlatform::LINUX_ARM64: return "LINUX_ARM64";
+        case NodePlatform::LINUX_X64: return "LINUX_X64";
+        case NodePlatform::WINDOWS_X64: return "WINDOWS_X64";
+        case NodePlatform::MACOS_ARM64: return "MACOS_ARM64";
+        case NodePlatform::MACOS_X64: return "MACOS_X64";
+        case NodePlatform::IOS_ARM64: return "IOS_ARM64";
+        default: return "UNKNOWN";
+    }
+}
+
+inline NodePlatform node_platform_from_string(const std::string& str) {
+    if (str == "LINUX_ARM64" || str == "JETSON_LINUX") return NodePlatform::LINUX_ARM64;
+    if (str == "LINUX_X64") return NodePlatform::LINUX_X64;
+    if (str == "WINDOWS_X64") return NodePlatform::WINDOWS_X64;
+    if (str == "MACOS_ARM64") return NodePlatform::MACOS_ARM64;
+    if (str == "MACOS_X64") return NodePlatform::MACOS_X64;
+    if (str == "IOS_ARM64") return NodePlatform::IOS_ARM64;
+    return NodePlatform::UNKNOWN;
+}
+
+enum class NodeSessionRole {
+    SESSION_COORDINATOR,
+    SESSION_PARTICIPANT,
+    UNASSIGNED
+};
+
+inline std::string to_string(NodeSessionRole r) {
+    switch (r) {
+        case NodeSessionRole::SESSION_COORDINATOR: return "SESSION_COORDINATOR";
+        case NodeSessionRole::SESSION_PARTICIPANT: return "SESSION_PARTICIPANT";
+        default: return "UNASSIGNED";
+    }
+}
+
+inline NodeSessionRole node_session_role_from_string(const std::string& str) {
+    if (str == "SESSION_COORDINATOR" || str == "PRIMARY_ORCHESTRATOR") return NodeSessionRole::SESSION_COORDINATOR;
+    if (str == "SESSION_PARTICIPANT" || str == "CAPTURE_WORKER") return NodeSessionRole::SESSION_PARTICIPANT;
+    return NodeSessionRole::UNASSIGNED;
+}
+
+enum class NodeOnlineState {
+    ONLINE,
+    OFFLINE,
+    CAPTURING,
+    DEGRADED
+};
+
+inline std::string to_string(NodeOnlineState s) {
+    switch (s) {
+        case NodeOnlineState::ONLINE: return "ONLINE";
+        case NodeOnlineState::OFFLINE: return "OFFLINE";
+        case NodeOnlineState::CAPTURING: return "CAPTURING";
+        case NodeOnlineState::DEGRADED: return "DEGRADED";
+        default: return "OFFLINE";
+    }
+}
+
+inline NodeOnlineState node_online_state_from_string(const std::string& str) {
+    if (str == "ONLINE") return NodeOnlineState::ONLINE;
+    if (str == "CAPTURING") return NodeOnlineState::CAPTURING;
+    if (str == "DEGRADED") return NodeOnlineState::DEGRADED;
+    return NodeOnlineState::OFFLINE;
+}
+
+enum class ClockSyncSource {
+    SYSTEM_UNSYNCED,
+    NTP,
+    PTP,
+    GNSS,
+    AV_ESTIMATED
+};
+
+inline std::string to_string(ClockSyncSource s) {
+    switch (s) {
+        case ClockSyncSource::SYSTEM_UNSYNCED: return "SYSTEM_UNSYNCED";
+        case ClockSyncSource::NTP: return "NTP";
+        case ClockSyncSource::PTP: return "PTP";
+        case ClockSyncSource::GNSS: return "GNSS";
+        case ClockSyncSource::AV_ESTIMATED: return "AV_ESTIMATED";
+        default: return "SYSTEM_UNSYNCED";
+    }
+}
+
+inline ClockSyncSource clock_sync_source_from_string(const std::string& str) {
+    if (str == "NTP") return ClockSyncSource::NTP;
+    if (str == "PTP") return ClockSyncSource::PTP;
+    if (str == "GNSS") return ClockSyncSource::GNSS;
+    if (str == "AV_ESTIMATED") return ClockSyncSource::AV_ESTIMATED;
+    return ClockSyncSource::SYSTEM_UNSYNCED;
+}
+
 } // namespace av::core::schemas
+

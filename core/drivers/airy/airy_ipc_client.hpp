@@ -19,6 +19,8 @@ struct AiryTelemetry {
     double current_yaw{0.0};
     uint64_t point_count{0};
     uint64_t trajectory_count{0};
+    double acquisition_rate_hz{0.0};
+    double slam_rate_hz{0.0};
 };
 
 class AiryIpcClient {

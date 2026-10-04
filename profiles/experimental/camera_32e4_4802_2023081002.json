@@ -1,0 +1,85 @@
+{
+  "calibration_sources": [],
+  "capabilities": [
+    "RGB_CAMERA",
+    "MONOCULAR_OPTICS",
+    "UVC_STREAMING"
+  ],
+  "coordinate_frames": {
+    "body_frame": "camera_base_link",
+    "optical_frame": "camera_optical_frame"
+  },
+  "device_family": "MONOCULAR_RGB_CAMERA",
+  "driver": "uvcvideo",
+  "firmware": "uvcvideo",
+  "hardware_revision": "REV_1",
+  "internal_extrinsics": [
+    {}
+  ],
+  "intrinsics": {
+    "cx": 960.0,
+    "cy": 540.0,
+    "device_path": "/dev/video0",
+    "distortion_model": "radtan",
+    "fx": 1430.0,
+    "fy": 1430.0,
+    "height": 1080,
+    "horizontal_fov_deg": 75.0,
+    "vertical_fov_deg": 45.0,
+    "width": 1920
+  },
+  "manufacturer": "Fic",
+  "model": "48MP USB Camera",
+  "output_contract": {
+    "frequency_hz": 30.0,
+    "point_type": "XYZRGB",
+    "scale_classification": {
+      "geometry_source": "MONOCULAR_NEURAL_RECONSTRUCTION",
+      "metric_constraint": "NONE",
+      "scale_status": "MODEL_ESTIMATED / NOT INDEPENDENTLY VERIFIED"
+    },
+    "target_frame": "canonical_av"
+  },
+  "preprocessing": [
+    {}
+  ],
+  "profile_id": "camera_32e4_4802_2023081002",
+  "profile_status": "EXPERIMENTAL",
+  "profile_version": "1.0.0",
+  "provenance": {
+    "confidence": 0.95,
+    "device_serial": "2023081002",
+    "evidence": "V4L2 and USB sysfs interrogation of /dev/video0 (32e4:4802)",
+    "firmware": "uvcvideo",
+    "schema_version": 1,
+    "source": "DEVICE_FACTORY",
+    "validated": false,
+    "value": "AUTONOMOUS_INTERROGATION"
+  },
+  "schema_version": 1,
+  "sdk": "V4L2_UVC",
+  "slam_backend": "LingBotStreamingBackend",
+  "slam_family": "MONOCULAR_NEURAL_RECONSTRUCTION",
+  "slam_parameters": {
+    "dof_mode": "6DOF",
+    "geometry_rate_hz": 1.25,
+    "rgb_nominal_hz": 30.0
+  },
+  "streams": [
+    {
+      "enabled": true,
+      "format": "RGB8_1080P",
+      "name": "rgb_image",
+      "nominal_rate_hz": 30.0,
+      "type": "RGB"
+    }
+  ],
+  "synchronization": "NONE_MONOCULAR",
+  "timestamp_sources": [
+    "HOST_MONOTONIC"
+  ],
+  "transport": "USB_UVC",
+  "validation_results": [
+    {}
+  ]
+}

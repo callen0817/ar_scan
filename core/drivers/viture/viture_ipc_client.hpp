@@ -19,8 +19,12 @@ struct VitureTelemetry {
     double current_yaw{0.0};
     uint64_t point_count{0};
     uint64_t trajectory_count{0};
+    double acquisition_rate_hz{0.0};
+    double slam_rate_hz{0.0};
     int feature_count{0};
     double feature_quality{0.0};
+    bool model_ready{false};
+    double gpu_memory_gb{0.0};
 };
 
 class VitureIpcClient {
@@ -35,6 +39,7 @@ public:
 
     bool ping();
     bool identify(nlohmann::json& out_info);
+    bool waitForModelReady(int timeout_ms = 15000);
     bool startAcquisition();
     bool stopAcquisition();
     bool reset();

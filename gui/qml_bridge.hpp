@@ -16,8 +16,46 @@
 #include "core/slam/gemini/gemini_rgbd_backend.hpp"
 #include "core/drivers/viture/viture_sensor_adapter.hpp"
 #include "core/slam/viture/viture_vio_backend.hpp"
+#include "core/drivers/uvc/generic_uvc_sensor_adapter.hpp"
+#include "core/interfaces/ineural_recon_backend.hpp"
+#include "core/reconstruction/lingbot/lingbot_slam_backend.hpp"
+#include "core/reconstruction/abot/abot_slam_backend.hpp"
+#include "core/profiling/device_profiler.hpp"
+#include "core/profiling/capability_matcher.hpp"
+#include "core/ecosystem/vendor_ecosystem.hpp"
+#include "core/multi_node/multi_node_session_orchestrator.hpp"
+#include "core/schemas/registration_result.hpp"
+#include "core/registration/registration_engine.hpp"
 
 namespace av::gui {
+
+struct SensorRuntimeContext {
+    std::string id;              // "AIRY", "GEMINI", "VITURE", "CAMERA"
+    std::string instance_id;     // "robosense_airy_01", "orbbec_gemini_336l_01", "viture_luma_ultra_01", "camera_32e4_4802_2023081002"
+    std::string name;            // "RoboSense RS-Airy", "Orbbec Gemini 336L", "VITURE Luma Ultra", "48MP USB Camera"
+    std::string short_name;      // "Airy LiDAR", "Gemini 336L", "Luma Ultra", "USB Camera"
+    std::string icon;            // "📡", "📷", "🕶️", "📷"
+    std::string profile_id;      // "robosense_airy_01", "gemini_336l_validated", "viture_luma_ultra_01", "camera_32e4_4802_2023081002"
+    std::string serial_number;   // "AIRY-2024-99812", "CPC6463000XW", "USB-35CA-1104", "2023081002"
+    std::string transport;       // "192.168.1.200:6699", "/dev/video0", "USB_3_UVC_HID", "/dev/video2"
+    std::string mount_label;     // "TOP_MOUNT", "FRONT_FACING", "HEAD_MOUNT", "HANDHELD"
+    std::string scale_status{"METRIC_VERIFIED"};
+
+    bool is_capturable{false};
+    std::string adapter_name{"NONE"};
+    std::string backend_name{"NONE"};
+    std::string reconstruction_family{"UNKNOWN"};
+
+    std::string device_status{"STANDBY"};
+    std::string acquisition_status{"STOPPED"};
+    std::string tracking_status{"IDLE"};
+    double acquisition_rate{0.0};
+    double slam_rate{0.0};
+    uint64_t point_count{0};
+
+    std::vector<core::schemas::PointXYZI> map_points;
+    std::vector<core::schemas::Pose3D> trajectory;
+};
 
 class QmlBridge : public QObject {
     Q_OBJECT
@@ -29,10 +67,11 @@ class QmlBridge : public QObject {
     Q_PROPERTY(QString projectCreatedAt READ projectCreatedAt NOTIFY projectCreatedAtChanged)
     Q_PROPERTY(QStringList availableProjects READ availableProjects NOTIFY availableProjectsChanged)
     Q_PROPERTY(QVariantList projectList READ projectList NOTIFY projectListChanged)
+    Q_PROPERTY(int projectSortMode READ projectSortMode WRITE setProjectSortMode NOTIFY projectSortModeChanged)
 
     // Capture & State Machine Properties
     Q_PROPERTY(QString captureState READ captureState NOTIFY captureStateChanged)
-    Q_PROPERTY(bool canStart READ canStart NOTIFY captureStateChanged)
+    Q_PROPERTY(bool canStart READ canStart NOTIFY canStartChanged)
     Q_PROPERTY(bool canStop READ canStop NOTIFY captureStateChanged)
     Q_PROPERTY(bool canSave READ canSave NOTIFY captureStateChanged)
     Q_PROPERTY(bool isCapturing READ isCapturing NOTIFY isCapturingChanged)
@@ -55,6 +94,7 @@ class QmlBridge : public QObject {
     Q_PROPERTY(QString selectedScannerStatus READ selectedScannerStatus NOTIFY selectedScannerChanged)
     Q_PROPERTY(QString selectedScannerDetails READ selectedScannerDetails NOTIFY selectedScannerChanged)
     Q_PROPERTY(QString selectedScannerValidationNotice READ selectedScannerValidationNotice NOTIFY selectedScannerChanged)
+    Q_PROPERTY(int selectedScannerIndex READ selectedScannerIndex NOTIFY selectedScannerChanged)
     Q_PROPERTY(QStringList availableScanners READ availableScanners NOTIFY availableScannersChanged)
     Q_PROPERTY(QVariantList scannerList READ scannerList NOTIFY scannerListChanged)
 
@@ -63,6 +103,54 @@ class QmlBridge : public QObject {
     Q_PROPERTY(QString hostHardware READ hostHardware CONSTANT)
     Q_PROPERTY(QString hostMemory READ hostMemory NOTIFY hostMetricsChanged)
     Q_PROPERTY(QString hostDisk READ hostDisk NOTIFY hostMetricsChanged)
+    Q_PROPERTY(double hostCpuUtil READ hostCpuUtil NOTIFY hostMetricsChanged)
+    Q_PROPERTY(double hostGpuUtil READ hostGpuUtil NOTIFY hostMetricsChanged)
+
+    // Multi-Sensor & M6 Modular Scanner Architecture
+    Q_PROPERTY(QVariantList activeSensors READ activeSensors NOTIFY activeSensorsChanged)
+    Q_PROPERTY(int activeSensorCount READ activeSensorCount NOTIFY activeSensorsChanged)
+    Q_PROPERTY(bool isMultiSensorMode READ isMultiSensorMode NOTIFY activeSensorsChanged)
+    Q_PROPERTY(bool isDualSensorMode READ isDualSensorMode NOTIFY isDualSensorModeChanged)
+    Q_PROPERTY(QString activeDisplaySensor READ activeDisplaySensor WRITE setActiveDisplaySensor NOTIFY activeDisplaySensorChanged)
+
+    Q_PROPERTY(QString airyDeviceStatus READ airyDeviceStatus NOTIFY airyTelemetryChanged)
+    Q_PROPERTY(QString airyAcquisitionStatus READ airyAcquisitionStatus NOTIFY airyTelemetryChanged)
+    Q_PROPERTY(QString airyTrackingStatus READ airyTrackingStatus NOTIFY airyTelemetryChanged)
+    Q_PROPERTY(qlonglong airyPointsCaptured READ airyPointsCaptured NOTIFY airyTelemetryChanged)
+    Q_PROPERTY(qreal airyAcquisitionRate READ airyAcquisitionRate NOTIFY airyTelemetryChanged)
+    Q_PROPERTY(qreal airySlamRate READ airySlamRate NOTIFY airyTelemetryChanged)
+
+    Q_PROPERTY(QString geminiDeviceStatus READ geminiDeviceStatus NOTIFY geminiTelemetryChanged)
+    Q_PROPERTY(QString geminiAcquisitionStatus READ geminiAcquisitionStatus NOTIFY geminiTelemetryChanged)
+    Q_PROPERTY(QString geminiTrackingStatus READ geminiTrackingStatus NOTIFY geminiTelemetryChanged)
+    Q_PROPERTY(qlonglong geminiPointsCaptured READ geminiPointsCaptured NOTIFY geminiTelemetryChanged)
+    Q_PROPERTY(qreal geminiAcquisitionRate READ geminiAcquisitionRate NOTIFY geminiTelemetryChanged)
+    Q_PROPERTY(qreal geminiSlamRate READ geminiSlamRate NOTIFY geminiTelemetryChanged)
+
+    Q_PROPERTY(QString vitureDeviceStatus READ vitureDeviceStatus NOTIFY vitureTelemetryChanged)
+    Q_PROPERTY(QString vitureAcquisitionStatus READ vitureAcquisitionStatus NOTIFY vitureTelemetryChanged)
+    Q_PROPERTY(QString vitureTrackingStatus READ vitureTrackingStatus NOTIFY vitureTelemetryChanged)
+    Q_PROPERTY(qlonglong viturePointsCaptured READ viturePointsCaptured NOTIFY vitureTelemetryChanged)
+    Q_PROPERTY(qreal vitureAcquisitionRate READ vitureAcquisitionRate NOTIFY vitureTelemetryChanged)
+    Q_PROPERTY(qreal vitureSlamRate READ vitureSlamRate NOTIFY vitureTelemetryChanged)
+
+    Q_PROPERTY(QString cameraDeviceStatus READ cameraDeviceStatus NOTIFY cameraTelemetryChanged)
+    Q_PROPERTY(QString cameraAcquisitionStatus READ cameraAcquisitionStatus NOTIFY cameraTelemetryChanged)
+    Q_PROPERTY(QString cameraTrackingStatus READ cameraTrackingStatus NOTIFY cameraTelemetryChanged)
+    Q_PROPERTY(qlonglong cameraPointsCaptured READ cameraPointsCaptured NOTIFY cameraTelemetryChanged)
+    Q_PROPERTY(qreal cameraAcquisitionRate READ cameraAcquisitionRate NOTIFY cameraTelemetryChanged)
+    Q_PROPERTY(qreal cameraSlamRate READ cameraSlamRate NOTIFY cameraTelemetryChanged)
+    Q_PROPERTY(QString cameraScaleStatus READ cameraScaleStatus NOTIFY cameraTelemetryChanged)
+    Q_PROPERTY(QString selectedCameraBackend READ selectedCameraBackend WRITE setSelectedCameraBackend NOTIFY selectedCameraBackendChanged)
+    Q_PROPERTY(QString cameraBackendStatus READ cameraBackendStatus NOTIFY cameraBackendStatusChanged)
+    Q_PROPERTY(QString cameraBackendNotice READ cameraBackendNotice NOTIFY cameraBackendNoticeChanged)
+
+    // Device Discovery and Profiling Properties (Milestone 14)
+    Q_PROPERTY(QVariantList discoveredPhysicalDevices READ discoveredPhysicalDevices NOTIFY discoveredDevicesChanged)
+    Q_PROPERTY(bool isDiscovering READ isDiscovering NOTIFY isDiscoveringChanged)
+    Q_PROPERTY(QString discoveryStatusText READ discoveryStatusText NOTIFY discoveryStatusTextChanged)
+    Q_PROPERTY(int discoveredDeviceCount READ discoveredDeviceCount NOTIFY discoveredDevicesChanged)
+    Q_PROPERTY(int unprofiledDeviceCount READ unprofiledDeviceCount NOTIFY discoveredDevicesChanged)
 
     // 3D Viewport Camera Properties
     Q_PROPERTY(qreal camYaw3D READ camYaw3D NOTIFY cam3DChanged)
@@ -76,6 +164,57 @@ class QmlBridge : public QObject {
     Q_PROPERTY(qreal pan2DX READ pan2DX NOTIFY cam2DChanged)
     Q_PROPERTY(qreal pan2DY READ pan2DY NOTIFY cam2DChanged)
     Q_PROPERTY(qreal zoom2D READ zoom2D NOTIFY cam2DChanged)
+
+    // Milestone 5.5: Orientation Diagnostic Tool
+    Q_PROPERTY(bool orientationDiagOpen READ orientationDiagOpen NOTIFY orientationDiagChanged)
+    Q_PROPERTY(QString orientationDiagSensor READ orientationDiagSensor NOTIFY orientationDiagChanged)
+    Q_PROPERTY(qreal orientationDiagRoll READ orientationDiagRoll NOTIFY orientationDiagChanged)
+    Q_PROPERTY(qreal orientationDiagPitch READ orientationDiagPitch NOTIFY orientationDiagChanged)
+    Q_PROPERTY(qreal orientationDiagYaw READ orientationDiagYaw NOTIFY orientationDiagChanged)
+    Q_PROPERTY(QString orientationDiagMatrixStr READ orientationDiagMatrixStr NOTIFY orientationDiagChanged)
+    Q_PROPERTY(QString orientationDiagTransformStr READ orientationDiagTransformStr NOTIFY orientationDiagChanged)
+    Q_PROPERTY(bool orientationDiagIsFrozen READ orientationDiagIsFrozen NOTIFY orientationDiagChanged)
+    Q_PROPERTY(QString orientationDiagStatusMsg READ orientationDiagStatusMsg NOTIFY orientationDiagChanged)
+
+    // Milestone 14.5: Sensor Ecosystem & Catalog Properties
+    Q_PROPERTY(int ecosystemModelCount READ ecosystemModelCount NOTIFY ecosystemChanged)
+    Q_PROPERTY(int ecosystemVendorCount READ ecosystemVendorCount NOTIFY ecosystemChanged)
+
+    // Milestone 10: Multi-Node Session Infrastructure
+    Q_PROPERTY(QString nodeUuid READ nodeUuid NOTIFY nodeIdentityChanged)
+    Q_PROPERTY(QString nodeDisplayName READ nodeDisplayName NOTIFY nodeIdentityChanged)
+    Q_PROPERTY(QString nodePlatform READ nodePlatform NOTIFY nodeIdentityChanged)
+    Q_PROPERTY(QString nodeHardware READ nodeHardware NOTIFY nodeIdentityChanged)
+    Q_PROPERTY(QString nodeRole READ nodeRole NOTIFY multiNodeSessionChanged)
+    Q_PROPERTY(QString nodeStatus READ nodeStatus NOTIFY multiNodeSessionChanged)
+    Q_PROPERTY(QString activeMultiNodeSessionId READ activeMultiNodeSessionId NOTIFY multiNodeSessionChanged)
+    Q_PROPERTY(bool isMultiNodeSessionActive READ isMultiNodeSessionActive NOTIFY multiNodeSessionChanged)
+    Q_PROPERTY(bool isCoordinator READ isCoordinator NOTIFY multiNodeSessionChanged)
+    Q_PROPERTY(QVariantList discoveredNodes READ discoveredNodes NOTIFY discoveredNodesChanged)
+    Q_PROPERTY(QVariantList sessionMembers READ sessionMembers NOTIFY sessionMembersChanged)
+    Q_PROPERTY(int selectedNodeViewIndex READ selectedNodeViewIndex WRITE setSelectedNodeViewIndex NOTIFY selectedNodeViewChanged)
+    Q_PROPERTY(QString selectedNodeViewName READ selectedNodeViewName NOTIFY selectedNodeViewChanged)
+    Q_PROPERTY(QString multiNodeNotice READ multiNodeNotice NOTIFY multiNodeNoticeChanged)
+
+    // Milestone 9: Cross-Sensor Offline Registration
+    Q_PROPERTY(bool isRegistering READ isRegistering NOTIFY registrationStateChanged)
+    Q_PROPERTY(QString registrationStatus READ registrationStatus NOTIFY registrationStateChanged)
+    Q_PROPERTY(QVariantList registrationList READ registrationList NOTIFY registrationListChanged)
+    Q_PROPERTY(QString activeRegistrationId READ activeRegistrationId NOTIFY activeRegistrationChanged)
+    Q_PROPERTY(bool isRegistrationActive READ isRegistrationActive NOTIFY activeRegistrationChanged)
+    Q_PROPERTY(qreal registrationOverlapPercent READ registrationOverlapPercent NOTIFY activeRegistrationChanged)
+    Q_PROPERTY(qlonglong registrationInlierCount READ registrationInlierCount NOTIFY activeRegistrationChanged)
+    Q_PROPERTY(qlonglong registrationTotalEvaluated READ registrationTotalEvaluated NOTIFY activeRegistrationChanged)
+    Q_PROPERTY(qreal registrationRmseMm READ registrationRmseMm NOTIFY activeRegistrationChanged)
+    Q_PROPERTY(qreal registrationFitness READ registrationFitness NOTIFY activeRegistrationChanged)
+    Q_PROPERTY(qreal registrationScale READ registrationScale NOTIFY activeRegistrationChanged)
+    Q_PROPERTY(QString registrationScalePolicy READ registrationScalePolicy NOTIFY activeRegistrationChanged)
+    Q_PROPERTY(QString registrationTransformStr READ registrationTransformStr NOTIFY activeRegistrationChanged)
+    Q_PROPERTY(int registrationViewMode READ registrationViewMode WRITE setRegistrationViewMode NOTIFY registrationViewModeChanged)
+    Q_PROPERTY(int registrationColorMode READ registrationColorMode WRITE setRegistrationColorMode NOTIFY registrationColorModeChanged)
+    Q_PROPERTY(QString registrationRefCaptureId READ registrationRefCaptureId NOTIFY activeRegistrationChanged)
+    Q_PROPERTY(QString registrationMovCaptureId READ registrationMovCaptureId NOTIFY activeRegistrationChanged)
+    Q_PROPERTY(QVariantList availableSessionCaptures READ availableSessionCaptures NOTIFY availableSessionCapturesChanged)
 
 public:
     explicit QmlBridge(std::shared_ptr<core::storage::StorageEngine> storage,
@@ -96,10 +235,18 @@ public:
     QString projectCreatedAt() const { return projectCreatedAt_; }
     QStringList availableProjects() const { return availableProjects_; }
     QVariantList projectList() const { return projectList_; }
+    int projectSortMode() const { return projectSortMode_; }
 
     // Getters: State & Capture
     QString captureState() const { return captureState_; }
-    bool canStart() const { return (captureState_ == "READY" || captureState_ == "SAVED") && !projectId_.isEmpty(); }
+    bool canStart() const {
+        if ((captureState_ != "READY" && captureState_ != "SAVED") || projectId_.isEmpty()) return false;
+        if (activeSensors_.empty()) return false;
+        for (const auto& s : activeSensors_) {
+            if (!s.is_capturable) return false;
+        }
+        return true;
+    }
     bool canStop() const { return isCapturing_; }
     bool canSave() const { return canSave_; }
     bool isCapturing() const { return isCapturing_; }
@@ -122,6 +269,7 @@ public:
     QString selectedScannerStatus() const { return selectedScannerStatus_; }
     QString selectedScannerDetails() const { return selectedScannerDetails_; }
     QString selectedScannerValidationNotice() const { return selectedScannerValidationNotice_; }
+    int selectedScannerIndex() const;
     QStringList availableScanners() const { return availableScanners_; }
     QVariantList scannerList() const { return scannerList_; }
 
@@ -130,6 +278,60 @@ public:
     QString hostHardware() const;
     QString hostMemory() const;
     QString hostDisk() const;
+    double hostCpuUtil() const;
+    double hostGpuUtil() const;
+
+    // Getters: Multi-Sensor & Modular Platform
+    QVariantList activeSensors() const;
+    int activeSensorCount() const { return static_cast<int>(activeSensors_.size()); }
+    bool isMultiSensorMode() const { return activeSensors_.size() > 1; }
+    bool isDualSensorMode() const { return activeSensors_.size() > 1; }
+    QString activeDisplaySensor() const { return activeDisplaySensor_; }
+
+    QString airyDeviceStatus() const { return airyDeviceStatus_; }
+    QString airyAcquisitionStatus() const { return airyAcquisitionStatus_; }
+    QString airyTrackingStatus() const { return airyTrackingStatus_; }
+    qlonglong airyPointsCaptured() const { return airyPointsCaptured_; }
+    qreal airyAcquisitionRate() const { return airyAcquisitionRate_; }
+    qreal airySlamRate() const { return airySlamRate_; }
+
+    QString geminiDeviceStatus() const { return geminiDeviceStatus_; }
+    QString geminiAcquisitionStatus() const { return geminiAcquisitionStatus_; }
+    QString geminiTrackingStatus() const { return geminiTrackingStatus_; }
+    qlonglong geminiPointsCaptured() const { return geminiPointsCaptured_; }
+    qreal geminiAcquisitionRate() const { return geminiAcquisitionRate_; }
+    qreal geminiSlamRate() const { return geminiSlamRate_; }
+
+    QString vitureDeviceStatus() const { return vitureDeviceStatus_; }
+    QString vitureAcquisitionStatus() const { return vitureAcquisitionStatus_; }
+    QString vitureTrackingStatus() const { return vitureTrackingStatus_; }
+    qlonglong viturePointsCaptured() const { return viturePointsCaptured_; }
+    qreal vitureAcquisitionRate() const { return vitureAcquisitionRate_; }
+    qreal vitureSlamRate() const { return vitureSlamRate_; }
+
+    QString cameraDeviceStatus() const { return cameraDeviceStatus_; }
+    QString cameraAcquisitionStatus() const { return cameraAcquisitionStatus_; }
+    QString cameraTrackingStatus() const { return cameraTrackingStatus_; }
+    qlonglong cameraPointsCaptured() const { return cameraPointsCaptured_; }
+    qreal cameraAcquisitionRate() const { return cameraAcquisitionRate_; }
+    qreal cameraSlamRate() const { return cameraSlamRate_; }
+    QString cameraScaleStatus() const { return cameraScaleStatus_; }
+    QString selectedCameraBackend() const { return selectedCameraBackend_; }
+    void setSelectedCameraBackend(const QString& name);
+    QString cameraBackendStatus() const;
+    QString cameraBackendNotice() const;
+    Q_INVOKABLE void selectCameraBackend(const QString& backendName);
+
+    // Getters: Device Discovery (Milestone 14)
+    QVariantList discoveredPhysicalDevices() const { return discoveredPhysicalDevices_; }
+    bool isDiscovering() const { return isDiscovering_; }
+    QString discoveryStatusText() const { return discoveryStatusText_; }
+    int discoveredDeviceCount() const { return discoveredDeviceCount_; }
+    int unprofiledDeviceCount() const { return unprofiledDeviceCount_; }
+
+    // Getters: Universal Sensor Ecosystem & Catalog (Milestone 14.5)
+    int ecosystemModelCount() const;
+    int ecosystemVendorCount() const;
 
     // Getters: 3D Camera
     qreal camYaw3D() const { return camYaw3D_; }
@@ -144,14 +346,81 @@ public:
     qreal pan2DY() const { return pan2DY_; }
     qreal zoom2D() const { return zoom2D_; }
 
+    // Getters: Milestone 5.5 Orientation Diagnostic
+    bool orientationDiagOpen() const { return orientationDiagOpen_; }
+    QString orientationDiagSensor() const { return orientationDiagSensor_; }
+    qreal orientationDiagRoll() const { return orientationDiagRoll_; }
+    qreal orientationDiagPitch() const { return orientationDiagPitch_; }
+    qreal orientationDiagYaw() const { return orientationDiagYaw_; }
+    QString orientationDiagMatrixStr() const { return orientationDiagMatrixStr_; }
+    QString orientationDiagTransformStr() const { return orientationDiagTransformStr_; }
+    bool orientationDiagIsFrozen() const { return orientationDiagSensor_ == "AIRY"; }
+    QString orientationDiagStatusMsg() const { return orientationDiagStatusMsg_; }
+
+    // Getters: Milestone 10 Multi-Node Session Infrastructure
+    QString nodeUuid() const;
+    QString nodeDisplayName() const;
+    QString nodePlatform() const;
+    QString nodeHardware() const;
+    QString nodeRole() const;
+    QString nodeStatus() const;
+    QString activeMultiNodeSessionId() const;
+    bool isMultiNodeSessionActive() const;
+    bool isCoordinator() const;
+    QVariantList discoveredNodes() const;
+    QVariantList sessionMembers() const;
+    int selectedNodeViewIndex() const { return selectedNodeViewIndex_; }
+    void setSelectedNodeViewIndex(int index);
+    QString selectedNodeViewName() const;
+    QString multiNodeNotice() const { return multiNodeNotice_; }
+
+    // Getters: Milestone 9 Cross-Sensor Offline Registration
+    bool isRegistering() const { return isRegistering_; }
+    QString registrationStatus() const { return registrationStatus_; }
+    QVariantList registrationList() const { return registrationList_; }
+    QString activeRegistrationId() const { return QString::fromStdString(activeRegistration_.registration_id); }
+    bool isRegistrationActive() const { return hasActiveRegistration_; }
+    qreal registrationOverlapPercent() const { return activeRegistration_.overlap_ratio * 100.0; }
+    qlonglong registrationInlierCount() const { return activeRegistration_.inlier_count; }
+    qlonglong registrationTotalEvaluated() const { return activeRegistration_.total_points_evaluated; }
+    qreal registrationRmseMm() const { return activeRegistration_.inlier_rmse_m * 1000.0; }
+    qreal registrationFitness() const { return activeRegistration_.fitness_score; }
+    qreal registrationScale() const { return activeRegistration_.scale_factor; }
+    QString registrationScalePolicy() const { return QString::fromStdString(core::schemas::scalePolicyToString(activeRegistration_.scale_policy)); }
+    QString registrationTransformStr() const;
+    int registrationViewMode() const { return registrationViewMode_; }
+    void setRegistrationViewMode(int mode);
+    int registrationColorMode() const { return registrationColorMode_; }
+    void setRegistrationColorMode(int mode);
+    QString registrationRefCaptureId() const { return QString::fromStdString(activeRegistration_.reference_capture_id); }
+    QString registrationMovCaptureId() const { return QString::fromStdString(activeRegistration_.moving_capture_id); }
+    QVariantList availableSessionCaptures() const { return availableSessionCaptures_; }
+
     // Q_INVOKABLE: Project Operations
     Q_INVOKABLE bool createProject(const QString& name, const QString& description);
     Q_INVOKABLE bool openProject(const QString& projectId);
     Q_INVOKABLE void refreshData();
+    Q_INVOKABLE void setProjectSortMode(int mode);
 
-    // Q_INVOKABLE: Scanner Selection
+    // Q_INVOKABLE: Scanner Selection & Modular Composition
     Q_INVOKABLE void selectScannerByIndex(int index);
     Q_INVOKABLE void selectScannerById(const QString& scannerId);
+    Q_INVOKABLE void setActiveDisplaySensor(const QString& sensorName);
+    Q_INVOKABLE QVariantList getAvailableDeviceProfiles() const;
+    Q_INVOKABLE bool saveCustomScannerConfig(const QString& name, const QStringList& profileIds);
+
+    // Q_INVOKABLE: Device Discovery and Onboarding (Milestone 14)
+    Q_INVOKABLE QVariantList discoverHardwareDevices();
+    Q_INVOKABLE void refreshDiscovery();
+    Q_INVOKABLE QVariantMap createProfileForDevice(const QString& deviceId);
+    Q_INVOKABLE void selectProfileForCapture(const QString& profileId);
+
+    // Q_INVOKABLE: Universal Sensor Ecosystem & Catalog (Milestone 14.5)
+    Q_INVOKABLE QStringList getEcosystemManufacturers() const;
+    Q_INVOKABLE QStringList getSensorTypesForManufacturer(const QString& vendor = "") const;
+    Q_INVOKABLE QVariantList getEcosystemModels(const QString& vendor = "", const QString& sensorType = "", const QString& searchQuery = "") const;
+    Q_INVOKABLE QVariantMap getModelDetails(const QString& modelId) const;
+    Q_INVOKABLE QVariantMap createTemplateProfileFromModel(const QString& modelId);
 
     // Q_INVOKABLE: Capture Control State Machine
     Q_INVOKABLE bool startCapture();
@@ -175,18 +444,61 @@ public:
     Q_INVOKABLE void zoom2DByFactor(qreal factor);
     Q_INVOKABLE void recenter2D();
 
+    // Q_INVOKABLE: Milestone 5.5 Orientation Diagnostic
+    Q_INVOKABLE void openOrientationDiagnostic(const QString& sensorId = "");
+    Q_INVOKABLE void closeOrientationDiagnostic();
+    Q_INVOKABLE void setOrientationDiagSensor(const QString& sensorId);
+    Q_INVOKABLE void setOrientationDiagRotation(qreal rollDeg, qreal pitchDeg, qreal yawDeg);
+    Q_INVOKABLE void stepOrientationDiagRotation(const QString& axis, qreal deltaDeg);
+    Q_INVOKABLE void resetOrientationDiagRotation();
+    Q_INVOKABLE bool acceptOrientationDiagRotation();
+
+    // Q_INVOKABLE: Milestone 10 Multi-Node Session Operations
+    Q_INVOKABLE void setNodeDisplayName(const QString& name);
+    Q_INVOKABLE void refreshMultiNodeDiscovery();
+    Q_INVOKABLE void addManualPeer(const QString& ip, int port = 9110);
+    Q_INVOKABLE bool createMultiNodeSession(const QString& sessionName);
+    Q_INVOKABLE bool inviteNodeToSession(const QString& nodeUuid);
+    Q_INVOKABLE bool joinMultiNodeSession(const QString& sessionId, const QString& coordIp, int coordPort = 9111);
+    Q_INVOKABLE bool leaveMultiNodeSession();
+    Q_INVOKABLE bool startCoordinatedCapture();
+    Q_INVOKABLE bool stopCoordinatedCapture();
+    Q_INVOKABLE void selectNodeView(int index);
+
+    // Q_INVOKABLE: Milestone 9 Offline Registration Operations (Intra-Project & Cross-Project)
+    Q_INVOKABLE QVariantList getProjectClouds(const QString& projectId);
+    Q_INVOKABLE void runRegistration(const QString& refProjectId, const QString& refCloudId,
+                                    const QString& movProjectId, const QString& movCloudId,
+                                    int scalePolicyMode = 0);
+    Q_INVOKABLE void runCaptureRegistration(const QString& refCaptureId, const QString& movCaptureId, int scalePolicyMode = 0);
+    Q_INVOKABLE bool saveRegistrationAsNewProject(const QString& newProjectName, const QString& newProjectDesc = "");
+    Q_INVOKABLE void loadRegistration(const QString& regId);
+    Q_INVOKABLE void refreshRegistrations();
+    Q_INVOKABLE void refreshSessionCaptures();
+    Q_INVOKABLE void saveRegistrationAsSessionMap(const QString& regId);
+    Q_INVOKABLE void clearActiveRegistration();
+
     // Direct PCD serialization & deserialization helpers
     void saveMapPcd(const std::string& filepath, const std::vector<core::schemas::PointXYZI>& points) const;
     bool loadMapPcd(const std::string& filepath, std::vector<core::schemas::PointXYZI>& out_points);
 
 signals:
+    void registrationStateChanged();
+    void registrationListChanged();
+    void activeRegistrationChanged();
+    void registrationViewModeChanged();
+    void registrationColorModeChanged();
+    void availableSessionCapturesChanged();
+
     void projectNameChanged();
     void projectIdChanged();
     void projectDescriptionChanged();
     void projectCreatedAtChanged();
     void availableProjectsChanged();
     void projectListChanged();
+    void projectSortModeChanged();
     void captureStateChanged();
+    void canStartChanged();
     void isCapturingChanged();
     void canSaveChanged();
     void elapsedTimeStringChanged();
@@ -204,12 +516,36 @@ signals:
     void cam2DChanged();
     void errorOccurred(const QString& errorTitle, const QString& errorMessage);
     void notification(const QString& title, const QString& message);
+    void isDualSensorModeChanged();
+    void activeSensorsChanged();
+    void activeDisplaySensorChanged();
+    void airyTelemetryChanged();
+    void geminiTelemetryChanged();
+    void vitureTelemetryChanged();
+    void cameraTelemetryChanged();
+    void selectedCameraBackendChanged();
+    void cameraBackendStatusChanged();
+    void cameraBackendNoticeChanged();
+    void orientationDiagChanged();
+    void discoveredDevicesChanged();
+    void isDiscoveringChanged();
+    void discoveryStatusTextChanged();
+    void ecosystemChanged();
+    void nodeIdentityChanged();
+    void multiNodeSessionChanged();
+    void discoveredNodesChanged();
+    void sessionMembersChanged();
+    void selectedNodeViewChanged();
+    void multiNodeNoticeChanged();
+    void sessionInviteReceived(const QString& sessionId, const QString& coordinatorUuid, const QString& projectId);
 
 private slots:
     void onTimerTick();
     void onTelemetryTick();
 
 private:
+    void rebuildActiveSensorsForSelection();
+
     std::shared_ptr<core::storage::StorageEngine> storage_;
     std::shared_ptr<platform::IPlatformAdapter> platform_;
     std::shared_ptr<core::drivers::airy::AirySensorAdapter> airyAdapter_;
@@ -218,6 +554,8 @@ private:
     std::shared_ptr<core::slam::gemini::GeminiRgbdBackend> geminiBackend_;
     std::shared_ptr<core::drivers::viture::VitureSensorAdapter> vitureAdapter_;
     std::shared_ptr<core::slam::viture::VitureVioBackend> vitureBackend_;
+    std::shared_ptr<core::drivers::uvc::GenericUvcSensorAdapter> cameraAdapter_;
+    std::shared_ptr<core::interfaces::INeuralReconstructionBackend> cameraBackend_;
 
     // Project state
     QString projectName_{"No Project Loaded"};
@@ -227,6 +565,8 @@ private:
     QString currentSessionId_{""};
     QStringList availableProjects_;
     QVariantList projectList_;
+    int projectSortMode_{0}; // 0: Date Descending (Newest First, default), 1: Date Ascending, 2: Name A-Z, 3: Name Z-A
+    void sortProjectList();
 
     // Scanner state
     QString selectedScannerId_{""};
@@ -255,6 +595,48 @@ private:
     std::vector<core::schemas::PointXYZI> mapPoints_;
     std::vector<core::schemas::Pose3D> trajectory_;
 
+    // M6 Modular Multi-Sensor Platform Buffers & States
+    std::vector<SensorRuntimeContext> activeSensors_;
+    bool isDualSensorMode_{false};
+    QString activeDisplaySensor_{"AIRY"};
+
+    QString airyDeviceStatus_{"STANDBY"};
+    QString airyAcquisitionStatus_{"STOPPED"};
+    QString airyTrackingStatus_{"IDLE"};
+    qlonglong airyPointsCaptured_{0};
+    qreal airyAcquisitionRate_{0.0};
+    qreal airySlamRate_{0.0};
+    std::vector<core::schemas::PointXYZI> airyMapPoints_;
+    std::vector<core::schemas::Pose3D> airyTrajectory_;
+
+    QString geminiDeviceStatus_{"STANDBY"};
+    QString geminiAcquisitionStatus_{"STOPPED"};
+    QString geminiTrackingStatus_{"IDLE"};
+    qlonglong geminiPointsCaptured_{0};
+    qreal geminiAcquisitionRate_{0.0};
+    qreal geminiSlamRate_{0.0};
+    std::vector<core::schemas::PointXYZI> geminiMapPoints_;
+    std::vector<core::schemas::Pose3D> geminiTrajectory_;
+
+    QString vitureDeviceStatus_{"STANDBY"};
+    QString vitureAcquisitionStatus_{"STOPPED"};
+    QString vitureTrackingStatus_{"IDLE"};
+    qlonglong viturePointsCaptured_{0};
+    qreal vitureAcquisitionRate_{0.0};
+    qreal vitureSlamRate_{0.0};
+    std::vector<core::schemas::PointXYZI> vitureMapPoints_;
+    std::vector<core::schemas::Pose3D> vitureTrajectory_;
+
+    QString cameraDeviceStatus_{"STANDBY"};
+    QString cameraAcquisitionStatus_{"STOPPED"};
+    QString cameraTrackingStatus_{"IDLE"};
+    qlonglong cameraPointsCaptured_{0};
+    qreal cameraAcquisitionRate_{0.0};
+    qreal cameraSlamRate_{0.0};
+    QString cameraScaleStatus_{"MODEL_ESTIMATED / NOT INDEPENDENTLY VERIFIED"};
+    std::vector<core::schemas::PointXYZI> cameraMapPoints_;
+    std::vector<core::schemas::Pose3D> cameraTrajectory_;
+
     // 3D Camera state
     qreal camYaw3D_{45.0};
     qreal camPitch3D_{30.0};
@@ -271,6 +653,49 @@ private:
     QTimer* timer_{nullptr};
     QTimer* telemetryTimer_{nullptr};
     int elapsed_seconds_{0};
+
+    // Milestone 5.5 Orientation Diagnostic state
+    bool orientationDiagOpen_{false};
+    QString orientationDiagSensor_{"GEMINI"};
+    qreal orientationDiagRoll_{0.0};
+    qreal orientationDiagPitch_{0.0};
+    qreal orientationDiagYaw_{0.0};
+    double orientationDiagR_[3][3]{{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}};
+    QString orientationDiagMatrixStr_{"[ +1.000, +0.000, +0.000 ]\n[ +0.000, +1.000, +0.000 ]\n[ +0.000, +0.000, +1.000 ]"};
+    QString orientationDiagTransformStr_{"X_av = (+1.000)*X\nY_av = (+1.000)*Y\nZ_av = (+1.000)*Z"};
+    QString orientationDiagStatusMsg_{"Adjust Roll/Pitch/Yaw until floor is horizontal and +Z is UP."};
+    void updateOrientationDiagMatrix();
+
+    // Hardware Discovery State (Milestone 14)
+    QVariantList discoveredPhysicalDevices_;
+    bool isDiscovering_{false};
+    QString discoveryStatusText_{"Ready to scan interfaces."};
+    int discoveredDeviceCount_{0};
+    int unprofiledDeviceCount_{0};
+
+    // Camera Neural Reconstruction Backend State (Milestone 14.6)
+    QString selectedCameraBackend_{"LingBotStreamingBackend"};
+
+    // Milestone 10: Multi-Node Session Infrastructure State
+    std::shared_ptr<core::multi_node::MultiNodeSessionOrchestrator> multiNodeOrchestrator_;
+    int selectedNodeViewIndex_{0};
+    QString multiNodeNotice_{"Single-node standalone mode."};
+
+    // Milestone 9: Cross-Sensor Offline Registration State
+    std::unique_ptr<core::registration::RegistrationEngine> registrationEngine_;
+    bool isRegistering_{false};
+    QString registrationStatus_{"Ready"};
+    QVariantList registrationList_;
+    QVariantList availableSessionCaptures_;
+    core::schemas::RegistrationResult activeRegistration_;
+    bool hasActiveRegistration_{false};
+    int registrationViewMode_{0}; // 0: Combined, 1: Reference Only, 2: Moving Only
+    int registrationColorMode_{1}; // 1: True Merged RGB, 0: Differentiated (Cyan/Amber)
+    std::vector<core::schemas::PointXYZI> regRefPoints_;
+    std::vector<core::schemas::PointXYZI> regMovPoints_;
+    std::vector<core::schemas::PointXYZI> regCombinedPointsDiff_;
+    std::vector<core::schemas::PointXYZI> regCombinedPointsOrig_;
+    void updateRegistrationDisplayPoints();
 };
 
 } // namespace av::gui

@@ -16,6 +16,7 @@ struct HostSystemMetrics {
     uint64_t available_disk_bytes{0};
     int cpu_cores{0};
     double cpu_utilization_percent{0.0};
+    double gpu_utilization_percent{0.0};
     bool is_jetson{false};
     std::string jetson_model;
 };

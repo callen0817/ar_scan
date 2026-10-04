@@ -66,6 +66,11 @@ class AirySlamDaemon:
         self.voxel_size = 0.05 # 5 cm resolution
         self.global_voxels = {}
         self.new_points_buffer = [] # points added since last client fetch
+        self.cloud_rate_hz = 0.0
+        self.odom_rate_hz = 0.0
+        self._cloud_count = 0
+        self._odom_count = 0
+        self._rate_calc_time = time.time()
 
         # Hardware Info cache
         self.hardware_info = {
@@ -223,6 +228,15 @@ class AirySlamDaemon:
                     "yaw": float(yaw), "timestamp_ns": ts_ns
                 }
                 self.tracking_state = "TRACKING_OK"
+                self._odom_count += 1
+                now = time.time()
+                elapsed = now - self._rate_calc_time
+                if elapsed >= 1.0:
+                    self.cloud_rate_hz = round(self._cloud_count / elapsed, 1)
+                    self.odom_rate_hz = round(self._odom_count / elapsed, 1)
+                    self._cloud_count = 0
+                    self._odom_count = 0
+                    self._rate_calc_time = now
 
                 # Append to trajectory if moved >= 2cm or rotated >= 1 deg, or first pose
                 if len(self.trajectory) == 0:
@@ -238,6 +252,9 @@ class AirySlamDaemon:
             num_points = msg.width * msg.height
             if num_points == 0 or msg.point_step < 12:
                 return
+
+            with self.lock:
+                self._cloud_count += 1
 
             try:
                 raw = bytes(msg.data)
@@ -347,7 +364,9 @@ class AirySlamDaemon:
                                 "is_capturing": self.is_capturing,
                                 "current_pose": dict(self.current_pose),
                                 "point_count": len(self.global_voxels),
-                                "trajectory_count": len(self.trajectory)
+                                "trajectory_count": len(self.trajectory),
+                                "acquisition_rate_hz": self.cloud_rate_hz,
+                                "slam_rate_hz": self.odom_rate_hz
                             }
                         import json
                         resp = json.dumps(telem) + "\n"

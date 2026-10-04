@@ -42,6 +42,18 @@ if(NOT Eigen3_FOUND)
     endif()
 endif()
 
+# Locate PCL (Milestone 9: Point Cloud Registration)
+find_package(PCL REQUIRED COMPONENTS common io registration features filters)
+if(PCL_FOUND)
+    message(STATUS "Found PCL ${PCL_VERSION}")
+    include_directories(${PCL_INCLUDE_DIRS})
+    link_directories(${PCL_LIBRARY_DIRS})
+    add_definitions(${PCL_DEFINITIONS})
+endif()
+
+# Locate OpenMP
+find_package(OpenMP)
+
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 add_compile_definitions(AV_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 set(CMAKE_BUILD_RPATH "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lib")

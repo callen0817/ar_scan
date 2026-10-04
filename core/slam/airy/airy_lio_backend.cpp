@@ -134,6 +134,8 @@ bool AiryLioBackend::updateTelemetry() {
     current_pose_ = telem.current_pose;
     current_yaw_ = telem.current_yaw;
     point_count_ = telem.point_count;
+    acquisition_rate_hz_ = telem.acquisition_rate_hz;
+    slam_rate_hz_ = telem.slam_rate_hz;
 
     if (telem.tracking_state == "TRACKING_OK") {
         tracking_state_ = schemas::TrackingState::TRACKING_OK;
@@ -199,6 +201,16 @@ double AiryLioBackend::getCurrentYaw() const {
 uint64_t AiryLioBackend::getPointCount() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return point_count_;
+}
+
+double AiryLioBackend::getAcquisitionRate() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return acquisition_rate_hz_;
+}
+
+double AiryLioBackend::getSlamRate() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return slam_rate_hz_;
 }
 
 } // namespace av::core::slam::airy

@@ -1,0 +1,21 @@
+{
+  "attached_sensors": [
+    {
+      "device_profile_id": "camera_32e4_4802_2023081002",
+      "instance_id": "camera_32e4_4802_2023081002",
+      "mount_label": "HANDHELD",
+      "scanner_node_id": "scanar-01",
+      "schema_version": 1,
+      "serial_number": "2023081002",
+      "status": "CONNECTED",
+      "transport_endpoint": "/dev/video0"
+    }
+  ],
+  "hostname": "orin-nano",
+  "ip_address": "127.0.0.1",
+  "node_id": "scanar-01",
+  "platform": "JETSON_LINUX",
+  "role": "PRIMARY_ORCHESTRATOR",
+  "schema_version": 1,
+  "status": "ONLINE"
+}

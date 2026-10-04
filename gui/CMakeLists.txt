@@ -6,6 +6,7 @@ add_library(av_gui STATIC
 
 target_include_directories(av_gui PUBLIC
     ${CMAKE_SOURCE_DIR}
+    ${PCL_INCLUDE_DIRS}
 )
 
 target_link_libraries(av_gui PUBLIC

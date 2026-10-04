@@ -21,6 +21,8 @@ struct GeminiTelemetry {
     uint64_t trajectory_count{0};
     int feature_count{0};
     double feature_quality{0.0};
+    double acquisition_rate_hz{0.0};
+    double slam_rate_hz{0.0};
 };
 
 class GeminiIpcClient {

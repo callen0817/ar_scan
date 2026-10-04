@@ -59,6 +59,13 @@ class GeminiSlamDaemon:
         self.voxel_size = 0.05  # 5 cm resolution
         self.global_voxels = {}
         self.new_points_buffer = []  # points added since last client fetch
+        self.canonical_R = None
+        self._load_canonical_transform()
+        self.cloud_rate_hz = 0.0
+        self.odom_rate_hz = 0.0
+        self._cloud_count = 0
+        self._odom_count = 0
+        self._rate_calc_time = time.time()
 
         # 2D Grid Map
         self.grid_map = {
@@ -90,11 +97,38 @@ class GeminiSlamDaemon:
             }
         }
 
+    def _load_canonical_transform(self):
+        self.canonical_R = None
+        tf_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "canonical_transform.json")
+        if os.path.exists(tf_path):
+            try:
+                with open(tf_path, "r") as f:
+                    data = json.load(f)
+                    if "matrix_3x3" in data:
+                        self.canonical_R = data["matrix_3x3"]
+                        print(f"[GeminiDaemon] Loaded canonical transform from {tf_path}")
+                        return
+            except Exception as e:
+                print(f"[GeminiDaemon] Error reading {tf_path}: {e}")
+
+        prof_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../profiles/validated/gemini_336l_profile.json")
+        if os.path.exists(prof_path):
+            try:
+                with open(prof_path, "r") as f:
+                    data = json.load(f)
+                    c_tf = data.get("canonical_av_transform", {})
+                    if "matrix_3x3" in c_tf:
+                        self.canonical_R = c_tf["matrix_3x3"]
+                        print(f"[GeminiDaemon] Loaded canonical transform from {prof_path}")
+            except Exception as e:
+                print(f"[GeminiDaemon] Error reading {prof_path}: {e}")
+
     def start_acquisition(self):
         with self.lock:
             if self.is_capturing:
                 return True, "Already capturing"
 
+            self._load_canonical_transform()
             print("[GeminiDaemon] Starting Orbbec Gemini 336L driver and RTAB-Map RGB-D SLAM...")
             self.global_voxels.clear()
             self.trajectory.clear()
@@ -228,10 +262,20 @@ class GeminiSlamDaemon:
             yaw = quat_to_yaw(o.x, o.y, o.z, o.w)
 
             with self.lock:
+                if self.canonical_R:
+                    px = self.canonical_R[0][0] * p.x + self.canonical_R[0][1] * p.y + self.canonical_R[0][2] * p.z
+                    py = self.canonical_R[1][0] * p.x + self.canonical_R[1][1] * p.y + self.canonical_R[1][2] * p.z
+                    pz = self.canonical_R[2][0] * p.x + self.canonical_R[2][1] * p.y + self.canonical_R[2][2] * p.z
+                    hx = self.canonical_R[0][0] * math.cos(yaw) + self.canonical_R[0][1] * math.sin(yaw)
+                    hy = self.canonical_R[1][0] * math.cos(yaw) + self.canonical_R[1][1] * math.sin(yaw)
+                    yaw = math.atan2(hy, hx)
+                else:
+                    px, py, pz = float(p.x), float(p.y), float(p.z)
+
                 self.current_pose = {
-                    "x": float(p.x),
-                    "y": float(p.y),
-                    "z": float(p.z),
+                    "x": float(px),
+                    "y": float(py),
+                    "z": float(pz),
                     "qx": float(o.x),
                     "qy": float(o.y),
                     "qz": float(o.z),
@@ -240,20 +284,31 @@ class GeminiSlamDaemon:
                     "timestamp_ns": int(t_ns)
                 }
                 self.tracking_state = "TRACKING_OK"
+                self._odom_count += 1
+                now = time.time()
+                elapsed = now - self._rate_calc_time
+                if elapsed >= 1.0:
+                    self.cloud_rate_hz = round(self._cloud_count / elapsed, 1)
+                    self.odom_rate_hz = round(self._odom_count / elapsed, 1)
+                    self._cloud_count = 0
+                    self._odom_count = 0
+                    self._rate_calc_time = now
 
                 # Append trajectory if motion exceeds threshold
                 if not self.trajectory:
-                    self.trajectory.append((t_ns, p.x, p.y, p.z, o.x, o.y, o.z, o.w, yaw))
+                    self.trajectory.append((t_ns, px, py, pz, o.x, o.y, o.z, o.w, yaw))
                 else:
                     last = self.trajectory[-1]
-                    dist_sq = (p.x - last[1])**2 + (p.y - last[2])**2 + (p.z - last[3])**2
+                    dist_sq = (px - last[1])**2 + (py - last[2])**2 + (pz - last[3])**2
                     angle_diff = abs(yaw - last[8])
                     if dist_sq >= 0.0004 or angle_diff >= 0.015:  # 2cm or ~0.8 deg
-                        self.trajectory.append((t_ns, p.x, p.y, p.z, o.x, o.y, o.z, o.w, yaw))
+                        self.trajectory.append((t_ns, px, py, pz, o.x, o.y, o.z, o.w, yaw))
 
         def cloud_callback(msg: PointCloud2):
             if not self.is_capturing:
                 return
+            with self.lock:
+                self._cloud_count += 1
             try:
                 # Read 3D points and real RGB from map frame
                 field_names = [f.name for f in msg.fields]
@@ -269,6 +324,11 @@ class GeminiSlamDaemon:
                 with self.lock:
                     for p in gen:
                         x, y, z = float(p[0]), float(p[1]), float(p[2])
+                        if self.canonical_R:
+                            rx = self.canonical_R[0][0] * x + self.canonical_R[0][1] * y + self.canonical_R[0][2] * z
+                            ry = self.canonical_R[1][0] * x + self.canonical_R[1][1] * y + self.canonical_R[1][2] * z
+                            rz = self.canonical_R[2][0] * x + self.canonical_R[2][1] * y + self.canonical_R[2][2] * z
+                            x, y, z = rx, ry, rz
                         if has_rgb:
                             rgb_val = p[3]
                             rgb_int = struct.unpack("I", struct.pack("f", float(rgb_val)))[0]
@@ -381,7 +441,9 @@ class GeminiSlamDaemon:
                             "current_pose": self.current_pose,
                             "current_yaw": self.current_pose["yaw"],
                             "feature_count": self.feature_count,
-                            "feature_quality": self.feature_quality
+                            "feature_quality": self.feature_quality,
+                            "acquisition_rate_hz": self.cloud_rate_hz,
+                            "slam_rate_hz": self.odom_rate_hz
                         }
                     resp = json.dumps(telem) + "\n"
                     conn_file.write(resp.encode("utf-8"))

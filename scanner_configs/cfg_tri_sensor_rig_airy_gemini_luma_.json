@@ -1,0 +1,34 @@
+{
+  "confidence": 0.0,
+  "config_id": "cfg_tri_sensor_rig_airy_gemini_luma_",
+  "extrinsic_status": "UNKNOWN",
+  "firmware": [],
+  "method": "PENDING_ENVIRONMENTAL_OBSERVATION",
+  "name": "Tri-Sensor Rig (Airy + Gemini + Luma)",
+  "provenance": {
+    "confidence": 1.0,
+    "device_serial": "",
+    "evidence": "User composed modular scanner configuration",
+    "firmware": "",
+    "schema_version": 1,
+    "source": "INFERRED_FROM_GEOMETRY",
+    "validated": false,
+    "value": ""
+  },
+  "relationship_type": "RIGID",
+  "relative_transforms": {},
+  "residual_error_stats": [
+    {}
+  ],
+  "scanner_node_id": "scanar-01",
+  "schema_version": 1,
+  "sensor_instances": [
+    "viture_luma_ultra_01",
+    "robosense_airy_01",
+    "orbbec_gemini_336l_01"
+  ],
+  "sensor_serials": [],
+  "supporting_captures": [],
+  "validation_date": "",
+  "validation_history": []
+}

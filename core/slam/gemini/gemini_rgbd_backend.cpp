@@ -138,6 +138,8 @@ bool GeminiRgbdBackend::updateTelemetry() {
     point_count_ = telem.point_count;
     feature_count_ = telem.feature_count;
     feature_quality_ = telem.feature_quality;
+    acquisition_rate_hz_ = telem.acquisition_rate_hz;
+    slam_rate_hz_ = telem.slam_rate_hz;
 
     if (telem.tracking_state == "TRACKING_OK") {
         tracking_state_ = schemas::TrackingState::TRACKING_OK;
@@ -213,6 +215,16 @@ int GeminiRgbdBackend::getFeatureCount() const {
 double GeminiRgbdBackend::getFeatureQuality() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return feature_quality_;
+}
+
+double GeminiRgbdBackend::getAcquisitionRate() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return acquisition_rate_hz_;
+}
+
+double GeminiRgbdBackend::getSlamRate() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return slam_rate_hz_;
 }
 
 } // namespace av::core::slam::gemini

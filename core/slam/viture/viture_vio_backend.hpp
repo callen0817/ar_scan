@@ -41,6 +41,14 @@ public:
     uint64_t getPointCount() const;
     int getFeatureCount() const;
     double getFeatureQuality() const;
+    double getAcquisitionRate() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return acquisition_rate_;
+    }
+    double getSlamRate() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return slam_rate_;
+    }
 
 private:
     std::shared_ptr<drivers::viture::VitureIpcClient> ipc_client_;
@@ -57,6 +65,8 @@ private:
     uint64_t point_count_{0};
     int feature_count_{0};
     double feature_quality_{0.0};
+    double acquisition_rate_{0.0};
+    double slam_rate_{0.0};
 };
 
 } // namespace av::core::slam::viture

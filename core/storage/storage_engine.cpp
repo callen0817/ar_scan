@@ -1,6 +1,7 @@
 #include "storage_engine.hpp"
 #include "core/logging/logger.hpp"
 #include <fstream>
+#include <unordered_set>
 
 namespace av::core::storage {
 
@@ -222,6 +223,24 @@ bool StorageEngine::loadDeviceProfile(const std::string& profile_id, schemas::De
             return true;
         }
     }
+
+    // Fallback: search all files in subfolders by internal profile_id
+    for (const auto& sub : subfolders) {
+        fs::path dir = root_path_ / "profiles" / sub;
+        if (fs::exists(dir)) {
+            for (const auto& entry : fs::directory_iterator(dir)) {
+                if (entry.path().extension() == ".json") {
+                    nlohmann::json fj;
+                    if (readJson(entry.path(), fj)) {
+                        if (fj.contains("profile_id") && fj["profile_id"] == profile_id) {
+                            out_profile = schemas::DeviceProfile::from_json(fj);
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
     return false;
 }
 
@@ -257,6 +276,22 @@ bool StorageEngine::loadScannerConfig(const std::string& config_id, schemas::Sca
         out_config = schemas::ScannerConfig::from_json(j);
         return true;
     }
+
+    // Fallback: search all files in scanner_configs by config_id
+    fs::path dir = root_path_ / "scanner_configs";
+    if (fs::exists(dir)) {
+        for (const auto& entry : fs::directory_iterator(dir)) {
+            if (entry.path().extension() == ".json") {
+                nlohmann::json fj;
+                if (readJson(entry.path(), fj)) {
+                    if (fj.contains("config_id") && fj["config_id"] == config_id) {
+                        out_config = schemas::ScannerConfig::from_json(fj);
+                        return true;
+                    }
+                }
+            }
+        }
+    }
     return false;
 }
 
@@ -274,4 +309,152 @@ std::vector<std::string> StorageEngine::listScannerConfigs() const {
     return configs;
 }
 
+bool StorageEngine::saveScannerNode(const schemas::ScannerNode& node) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (node.node_id().empty()) return false;
+    fs::path target_file = root_path_ / "scanner_nodes" / (node.node_id() + ".json");
+    return atomicWriteJson(target_file, node.to_json());
+}
+
+bool StorageEngine::loadScannerNode(const std::string& node_id, schemas::ScannerNode& out_node) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    fs::path target_file = root_path_ / "scanner_nodes" / (node_id + ".json");
+    nlohmann::json j;
+    if (readJson(target_file, j)) {
+        out_node = schemas::ScannerNode::from_json(j);
+        return true;
+    }
+    return false;
+}
+
+std::vector<std::string> StorageEngine::listScannerNodes() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<std::string> nodes;
+    fs::path dir = root_path_ / "scanner_nodes";
+    if (fs::exists(dir)) {
+        for (const auto& entry : fs::directory_iterator(dir)) {
+            if (entry.path().extension() == ".json") {
+                nodes.push_back(entry.path().stem().string());
+            }
+        }
+    }
+    return nodes;
+}
+
+bool StorageEngine::saveSessionScannerNode(const std::string& project_id, const std::string& session_id, const schemas::ScannerNode& node) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (project_id.empty() || session_id.empty() || node.node_uuid().empty()) return false;
+    
+    fs::path sess_dir = root_path_ / "projects" / project_id / "sessions" / session_id;
+    fs::path nodes_dir = sess_dir / "scanner_nodes";
+    fs::create_directories(nodes_dir);
+
+    std::string id = node.node_uuid().empty() ? node.node_id() : node.node_uuid();
+    fs::path target_file = nodes_dir / (id + ".json");
+    bool ok = atomicWriteJson(target_file, node.to_json());
+
+    // Also write legacy scanner_node.json in session dir for backward compatibility
+    fs::path legacy_file = sess_dir / "scanner_node.json";
+    if (!fs::exists(legacy_file)) {
+        atomicWriteJson(legacy_file, node.to_json());
+    }
+
+    return ok;
+}
+
+bool StorageEngine::loadSessionScannerNode(const std::string& project_id, const std::string& session_id, const std::string& node_id, schemas::ScannerNode& out_node) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    fs::path sess_dir = root_path_ / "projects" / project_id / "sessions" / session_id;
+    fs::path target_file = sess_dir / "scanner_nodes" / (node_id + ".json");
+    nlohmann::json j;
+    if (readJson(target_file, j)) {
+        out_node = schemas::ScannerNode::from_json(j);
+        return true;
+    }
+    // Check legacy single-node file
+    fs::path legacy_file = sess_dir / "scanner_node.json";
+    if (readJson(legacy_file, j)) {
+        out_node = schemas::ScannerNode::from_json(j);
+        if (out_node.node_uuid() == node_id || out_node.node_id() == node_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::vector<schemas::ScannerNode> StorageEngine::listSessionScannerNodes(const std::string& project_id, const std::string& session_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<schemas::ScannerNode> result;
+    std::unordered_set<std::string> seen_uuids;
+    fs::path sess_dir = root_path_ / "projects" / project_id / "sessions" / session_id;
+    fs::path nodes_dir = sess_dir / "scanner_nodes";
+
+    if (fs::exists(nodes_dir)) {
+        for (const auto& entry : fs::directory_iterator(nodes_dir)) {
+            if (entry.path().extension() == ".json") {
+                nlohmann::json j;
+                if (readJson(entry.path(), j)) {
+                    auto node = schemas::ScannerNode::from_json(j);
+                    seen_uuids.insert(node.node_uuid());
+                    result.push_back(node);
+                }
+            }
+        }
+    }
+
+    // Check legacy file if no multi-node entries found
+    fs::path legacy_file = sess_dir / "scanner_node.json";
+    if (fs::exists(legacy_file)) {
+        nlohmann::json j;
+        if (readJson(legacy_file, j)) {
+            auto node = schemas::ScannerNode::from_json(j);
+            if (seen_uuids.find(node.node_uuid()) == seen_uuids.end()) {
+                result.push_back(node);
+            }
+        }
+    }
+
+    return result;
+}
+
+bool StorageEngine::saveRegistrationResult(const std::string& project_id, const std::string& session_id, const schemas::RegistrationResult& reg) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    fs::path reg_dir = root_path_ / "projects" / project_id / "sessions" / session_id / "registrations";
+    fs::create_directories(reg_dir);
+    fs::path reg_file = reg_dir / (reg.registration_id + ".json");
+    return atomicWriteJson(reg_file, reg.to_json());
+}
+
+bool StorageEngine::loadRegistrationResult(const std::string& project_id, const std::string& session_id, const std::string& reg_id, schemas::RegistrationResult& out_reg) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    fs::path reg_file = root_path_ / "projects" / project_id / "sessions" / session_id / "registrations" / (reg_id + ".json");
+    if (!fs::exists(reg_file)) {
+        return false;
+    }
+    nlohmann::json j;
+    if (!readJson(reg_file, j)) {
+        return false;
+    }
+    out_reg = schemas::RegistrationResult::from_json(j);
+    return true;
+}
+
+std::vector<schemas::RegistrationResult> StorageEngine::listRegistrationResults(const std::string& project_id, const std::string& session_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<schemas::RegistrationResult> result;
+    fs::path reg_dir = root_path_ / "projects" / project_id / "sessions" / session_id / "registrations";
+    if (fs::exists(reg_dir)) {
+        for (const auto& entry : fs::directory_iterator(reg_dir)) {
+            if (entry.path().extension() == ".json") {
+                nlohmann::json j;
+                if (readJson(entry.path(), j)) {
+                    result.push_back(schemas::RegistrationResult::from_json(j));
+                }
+            }
+        }
+    }
+    return result;
+}
+
 } // namespace av::core::storage
+

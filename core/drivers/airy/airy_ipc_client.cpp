@@ -197,6 +197,8 @@ bool AiryIpcClient::getTelemetry(AiryTelemetry& out_telem) {
         out_telem.is_capturing = j.value("is_capturing", false);
         out_telem.point_count = j.value("point_count", 0ULL);
         out_telem.trajectory_count = j.value("trajectory_count", 0ULL);
+        out_telem.acquisition_rate_hz = j.value("acquisition_rate_hz", 0.0);
+        out_telem.slam_rate_hz = j.value("slam_rate_hz", 0.0);
 
         if (j.contains("current_pose")) {
             auto cp = j["current_pose"];

@@ -41,6 +41,8 @@ public:
     uint64_t getPointCount() const;
     int getFeatureCount() const;
     double getFeatureQuality() const;
+    double getAcquisitionRate() const;
+    double getSlamRate() const;
 
 private:
     std::shared_ptr<drivers::gemini::GeminiIpcClient> ipc_client_;
@@ -57,6 +59,8 @@ private:
     uint64_t point_count_{0};
     int feature_count_{0};
     double feature_quality_{0.0};
+    double acquisition_rate_hz_{0.0};
+    double slam_rate_hz_{0.0};
 };
 
 } // namespace av::core::slam::gemini

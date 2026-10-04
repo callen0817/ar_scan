@@ -40,8 +40,8 @@ int main() {
     auto cal = adapter.getCalibration();
     assert(!cal.empty());
     assert(cal[0].source() == schemas::CalibrationSource::DEVICE_FACTORY);
-    assert(cal[0].device_serial() == "VITURE-35CA-1104");
-    assert(cal[0].firmware() == "1.0.12");
+    assert(cal[0].device_serial() == "P6SPIH54101350");
+    assert(cal[0].firmware() == "0.1.0.7");
     assert(cal[0].validated() == true);
     std::cout << "  ✓ VITURE factory calibration provenance verified (" << cal[0].device_serial() << ", FW: " << cal[0].firmware() << ")." << std::endl;
 

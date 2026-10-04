@@ -20,12 +20,12 @@ std::string VitureSensorAdapter::identify() const {
         nlohmann::json info;
         if (ipc_client_->identify(info)) {
             std::string model = info.value("model", "Luma Ultra XR Glasses");
-            std::string sn = info.value("serial", "VITURE-35CA-1104");
-            std::string fw = info.value("firmware", "1.0.12");
+            std::string sn = info.value("serial", "P6SPIH54101350");
+            std::string fw = info.value("firmware", "0.1.0.7");
             return "VITURE " + model + " (SN: " + sn + ", FW: " + fw + ")";
         }
     }
-    return "VITURE Luma Ultra XR Glasses (SN: VITURE-35CA-1104, FW: 1.0.12)";
+    return "VITURE Luma Ultra XR Glasses (SN: P6SPIH54101350, FW: 0.1.0.7)";
 }
 
 bool VitureSensorAdapter::connect(const schemas::SensorInstance& instance, const schemas::DeviceProfile& profile) {
@@ -77,7 +77,7 @@ std::vector<std::string> VitureSensorAdapter::getCapabilities() const {
 std::vector<schemas::StreamInfo> VitureSensorAdapter::getStreams() const {
     std::vector<schemas::StreamInfo> streams;
     schemas::StreamInfo pose{"head_pose_vio", "POSE", "6DOF_POSE", 60.0, true};
-    schemas::StreamInfo imu{"raw_imu", "IMU", "6DOF_IMU", 1000.0, true};
+    schemas::StreamInfo imu{"raw_imu", "IMU", "6DOF_IMU", 775.0, true};
     schemas::StreamInfo rgb{"rgb_camera", "RGB", "RGB8_1080P", 30.0, true};
     schemas::StreamInfo stereo{"stereo_tracking", "STEREO", "MONO8_VGA", 25.0, true};
     streams.push_back(pose);
@@ -93,8 +93,8 @@ std::vector<schemas::CalibrationProvenance> VitureSensorAdapter::getCalibration(
     cal.set_source(schemas::CalibrationSource::DEVICE_FACTORY);
     cal.set_value("FACTORY_EEPROM");
     cal.set_confidence(1.0);
-    cal.set_device_serial("VITURE-35CA-1104");
-    cal.set_firmware("1.0.12");
+    cal.set_device_serial("P6SPIH54101350");
+    cal.set_firmware("0.1.0.7");
     cal.set_evidence("Factory calibration stored in internal XR glasses firmware; verified via libglasses.so");
     cal.set_validated(true);
     cal_list.push_back(cal);

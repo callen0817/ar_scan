@@ -29,6 +29,9 @@ bool VitureVioBackend::start() {
         return false;
     }
 
+    // Ensure foundation model is loaded and ready on GPU before starting acquisition
+    ipc_client_->waitForModelReady(15000);
+
     if (ipc_client_->startAcquisition()) {
         running_ = true;
         tracking_state_ = schemas::TrackingState::INITIALIZING;
@@ -103,8 +106,8 @@ schemas::MapMetadata VitureVioBackend::getMapMetadata() const {
     cal.set_source(schemas::CalibrationSource::DEVICE_FACTORY);
     cal.set_value("FACTORY_EEPROM");
     cal.set_confidence(1.0);
-    cal.set_device_serial("VITURE-35CA-1104");
-    cal.set_firmware("1.0.12");
+    cal.set_device_serial("P6SPIH54101350");
+    cal.set_firmware("0.1.0.7");
     cal.set_evidence("Factory calibration stored in internal XR glasses firmware; verified via libglasses.so");
     cal.set_validated(true);
     meta.set_provenance(cal);
@@ -140,6 +143,8 @@ bool VitureVioBackend::updateTelemetry() {
         point_count_ = telem.point_count;
         feature_count_ = telem.feature_count;
         feature_quality_ = telem.feature_quality;
+        acquisition_rate_ = telem.acquisition_rate_hz;
+        slam_rate_ = telem.slam_rate_hz;
 
         if (telem.tracking_state == "TRACKING_OK") {
             tracking_state_ = schemas::TrackingState::TRACKING_OK;

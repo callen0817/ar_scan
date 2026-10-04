@@ -39,6 +39,21 @@ public:
     bool loadScannerConfig(const std::string& config_id, schemas::ScannerConfig& out_config) override;
     std::vector<std::string> listScannerConfigs() const override;
 
+    // Scanner Node Persistence
+    bool saveScannerNode(const schemas::ScannerNode& node) override;
+    bool loadScannerNode(const std::string& node_id, schemas::ScannerNode& out_node) override;
+    std::vector<std::string> listScannerNodes() const override;
+
+    // Session-Scoped Scanner Node Persistence (M10 Multi-Node Session)
+    bool saveSessionScannerNode(const std::string& project_id, const std::string& session_id, const schemas::ScannerNode& node) override;
+    bool loadSessionScannerNode(const std::string& project_id, const std::string& session_id, const std::string& node_id, schemas::ScannerNode& out_node) override;
+    std::vector<schemas::ScannerNode> listSessionScannerNodes(const std::string& project_id, const std::string& session_id) override;
+
+    // Registration Persistence (Milestone 9 Cross-Sensor Registration)
+    bool saveRegistrationResult(const std::string& project_id, const std::string& session_id, const schemas::RegistrationResult& reg) override;
+    bool loadRegistrationResult(const std::string& project_id, const std::string& session_id, const std::string& reg_id, schemas::RegistrationResult& out_reg) override;
+    std::vector<schemas::RegistrationResult> listRegistrationResults(const std::string& project_id, const std::string& session_id) override;
+
 private:
     mutable std::mutex mutex_;
     fs::path root_path_;

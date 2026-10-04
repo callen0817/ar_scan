@@ -97,19 +97,18 @@ bool VitureIpcClient::ensureDaemonRunning() {
     if (pid == 0) {
         // Child process
         setsid();
-        int devnull = open("/dev/null", O_RDWR);
-        if (devnull >= 0) {
-            dup2(devnull, STDIN_FILENO);
-            dup2(devnull, STDOUT_FILENO);
-            dup2(devnull, STDERR_FILENO);
-            close(devnull);
+        int logfd = open("/tmp/av_viture_daemon.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (logfd >= 0) {
+            dup2(logfd, STDOUT_FILENO);
+            dup2(logfd, STDERR_FILENO);
+            close(logfd);
         }
-        execlp("python3", "python3", "/home/scanar/av_scan/core/drivers/viture/av_viture_daemon.py", nullptr);
+        execlp("python3", "python3", "-u", "/home/scanar/av_scan/core/drivers/viture/av_viture_daemon.py", nullptr);
         _exit(1);
     } else if (pid > 0) {
         daemon_pid_ = pid;
-        // Wait up to 3 seconds for daemon to bind and become ready
-        for (int i = 0; i < 15; ++i) {
+        // Wait up to 10 seconds for daemon to bind and become ready
+        for (int i = 0; i < 50; ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
             if (connect() && ping()) {
                 AV_LOG_INFO("VitureIpcClient", "Successfully connected to av_viture_daemon (PID " + std::to_string(pid) + ")");
@@ -197,11 +196,25 @@ bool VitureIpcClient::identify(nlohmann::json& out_info) {
     }
 }
 
+bool VitureIpcClient::waitForModelReady(int timeout_ms) {
+    int elapsed = 0;
+    int step = 200;
+    while (elapsed < timeout_ms) {
+        VitureTelemetry telem;
+        if (getTelemetry(telem) && telem.model_ready) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(step));
+        elapsed += step;
+    }
+    return false;
+}
+
 bool VitureIpcClient::startAcquisition() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!sendCommand("START")) return false;
     std::string resp;
-    if (!readLine(resp, 5000)) return false;
+    if (!readLine(resp, 10000)) return false;
     return resp.find("START_OK") != std::string::npos;
 }
 
@@ -233,9 +246,13 @@ bool VitureIpcClient::getTelemetry(VitureTelemetry& out_telem) {
         out_telem.is_capturing = j.value("is_capturing", false);
         out_telem.point_count = j.value("point_count", uint64_t(0));
         out_telem.trajectory_count = j.value("trajectory_count", uint64_t(0));
+        out_telem.acquisition_rate_hz = j.value("acquisition_rate_hz", 0.0);
+        out_telem.slam_rate_hz = j.value("slam_rate_hz", 0.0);
         out_telem.current_yaw = j.value("current_yaw", 0.0);
         out_telem.feature_count = j.value("feature_count", 0);
         out_telem.feature_quality = j.value("feature_quality", 0.0);
+        out_telem.model_ready = j.value("model_ready", false);
+        out_telem.gpu_memory_gb = j.value("gpu_memory_gb", 0.0);
 
         if (j.contains("current_pose")) {
             auto& p = j["current_pose"];

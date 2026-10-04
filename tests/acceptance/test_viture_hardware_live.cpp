@@ -55,6 +55,11 @@ int main() {
     }
     std::cout << "  ✓ Adapter connected: " << adapter.identify() << std::endl;
 
+    std::cout << "[Step 3.5] Waiting for LingBot foundation model to become resident on GPU..." << std::endl;
+    if (client->waitForModelReady(20000)) {
+        std::cout << "  ✓ LingBot foundation model resident on GPU." << std::endl;
+    }
+
     std::cout << "[Step 4] Starting live acquisition and Carina 6-DoF VIO..." << std::endl;
     if (!backend.start()) {
         std::cerr << "FAIL: Could not start backend acquisition" << std::endl;
@@ -62,8 +67,8 @@ int main() {
     }
     std::cout << "  ✓ Acquisition & Carina 6-DoF VIO launched." << std::endl;
 
-    std::cout << "[Step 5] Streaming live spatial data for 7 seconds..." << std::endl;
-    for (int i = 0; i < 7; ++i) {
+    std::cout << "[Step 5] Streaming live spatial data for 20 seconds (LingBot + Carina VIO)..." << std::endl;
+    for (int i = 0; i < 20; ++i) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         backend.updateTelemetry();
         backend.fetchNewPoints();
@@ -91,6 +96,17 @@ int main() {
     std::cout << "  ✓ 6-DoF VIO stopped cleanly." << std::endl;
     std::cout << "  Final 3D Map Point Count: " << final_pts.size() << std::endl;
     std::cout << "  Final Trajectory Count: " << backend.getTrajectory().size() << std::endl;
+
+    size_t color_pts = 0;
+    for (const auto& p : final_pts) {
+        if (p.has_color) color_pts++;
+    }
+    std::cout << "  Points with authentic camera RGB: " << color_pts << std::endl;
+    if (!final_pts.empty()) {
+        const auto& p0 = final_pts[0];
+        std::cout << "  Sample Point: X=" << p0.x << "m, Y=" << p0.y << "m, Z=" << p0.z
+                  << "m, Conf=" << p0.intensity << ", RGB=(" << (int)p0.r << "," << (int)p0.g << "," << (int)p0.b << ")" << std::endl;
+    }
 
     client->shutdownDaemon();
     std::cout << "==========================================================" << std::endl;
