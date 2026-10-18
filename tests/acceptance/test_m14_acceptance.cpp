@@ -311,6 +311,10 @@ int main() {
     std::cout << "  - Matched Existing Profile ID: " << reused_profile_id << "\n";
     std::cout << "  ✓ PASS: Discovered camera recognizes and reuses generated profile without duplication.\n\n";
 
+    // Clean up temporary test project directory
+    std::error_code ec;
+    fs::remove_all(base_dir / "projects" / proj_id, ec);
+
     std::cout << "=================================================================\n";
     std::cout << "ALL 9 MILESTONE 14 ACCEPTANCE GATES COMPLETED SUCCESSFULLY!\n";
     std::cout << "=================================================================\n";

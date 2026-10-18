@@ -11,24 +11,49 @@ ApplicationWindow {
     height: 960
     minimumWidth: 1024
     minimumHeight: 680
-    title: "AV Scan — Find Your Sense (Commercial Spatial Capture)"
-    color: "#0f1115"
+    title: "AV Scan — Artificial Vision Spatial Capture"
+    // Transparent window surface so optical see-through AR glasses and desktop compositors
+    // see directly through the application window and the left passthrough viewport (matching scanarMini).
+    color: "transparent"
+    flags: Qt.Window | Qt.FramelessWindowHint
+
+    // Apple Glass (visionOS) AR Optical See-Through Theme Tokens (copied from scanarMini AV_THEME)
+    readonly property string avGoldPrimary: "#BAA164"
+    readonly property string avGoldBright: "#E5C983"
+    readonly property string avGoldMuted: "#D8BF7C"
+    readonly property string avWhitePure: "#FFFFFF"
+    readonly property string avWhiteWarm: "#FCFBF8"
+    readonly property string avWhiteMuted: "#D0CCC2"
+    readonly property string avStatusOk: "#4ADE80"
+    readonly property string avStatusWarn: "#F59E0B"
+    readonly property string avStatusErr: "#F87171"
+
+    // Live AR Glass Opacity % (0% = pure zero-fill optical see-through, default 12% matching scanarMini)
+    property int glassOpacityPct: 12
+    property bool skipSplashOnStartup: false
+    property bool showSplashScreen: !skipSplashOnStartup
+    property int rightDeckTab: 0
 
     Component.onCompleted: {
         bridge.refreshDiscovery();
         for (var i = 0; i < Qt.application.arguments.length; ++i) {
             if (Qt.application.arguments[i] === "--open-catalog") {
+                root.skipSplashOnStartup = true;
                 configureSensorsDialog.currentTab = 2;
                 configureSensorsDialog.open();
                 break;
             } else if (Qt.application.arguments[i] === "--open-config") {
+                root.skipSplashOnStartup = true;
                 configureSensorsDialog.currentTab = 1;
                 configureSensorsDialog.open();
                 break;
             } else if (Qt.application.arguments[i] === "--open-diag") {
+                root.skipSplashOnStartup = true;
                 bridge.openOrientationDiagnostic();
                 orientationDiagDialog.open();
                 break;
+            } else if (Qt.application.arguments[i] === "--no-splash") {
+                root.skipSplashOnStartup = true;
             }
         }
     }
@@ -78,2092 +103,2011 @@ ApplicationWindow {
         return "STOPPED";
     }
 
-    // Top Header / Navigation Bar
+    // =========================================================================
+    // OUTER APPLE GLASS (visionOS) TRANSLUCENT SHELL (Matches ScanHUBOS.paintEvent)
+    // =========================================================================
     Rectangle {
-        id: header
-        height: 68
-        color: "#161920"
-        anchors {
-            top: parent.top
-            left: parent.left
-            right: parent.right
-        }
+        id: outerGlassShell
+        anchors.fill: parent
+        radius: root.visibility === Window.Maximized ? 0 : 16
+        // Base glass tint scaled by glassOpacityPct (at 12%, alpha is ~0.055; at 0%, completely transparent)
+        color: Qt.rgba(18/255, 18/255, 22/255, (root.glassOpacityPct / 100.0) * 0.48)
+        border.color: "#A6BAA164" // rgba(186, 161, 100, 165) 1.5px Champagne Gold outer specular rim
+        border.width: 1.5
 
+        // Inner White Glass Refraction Rim (inset by 1.5px, matching scanarMini)
         Rectangle {
-            anchors.bottom: parent.bottom
-            anchors.left: parent.left
-            anchors.right: parent.right
-            height: 1
-            color: "#232834"
-        }
-
-        RowLayout {
             anchors.fill: parent
-            anchors.leftMargin: 20
-            anchors.rightMargin: 20
-            spacing: 16
+            anchors.margins: 1.5
+            radius: parent.radius > 1 ? parent.radius - 1.5 : 0
+            color: "transparent"
+            border.color: "#3BFFFFFF" // rgba(255, 255, 255, 58)
+            border.width: 1
+        }
+    }
 
-            // Brand Block
-            RowLayout {
-                spacing: 12
-                Rectangle {
-                    width: 36
-                    height: 36
-                    radius: 8
-                    gradient: Gradient {
-                        GradientStop { position: 0.0; color: "#0ea5e9" }
-                        GradientStop { position: 1.0; color: "#0284c7" }
+    // =========================================================================
+    // MAIN 4-ROW VERTICAL LAYOUT (Matches scanarMini ScanHUBOS.init_ui)
+    //   Row 1: Top Header Bar (52px)
+    //   Row 2: Action & Session Control Bar (48px)
+    //   Row 3: 60% Clear Passthrough Left / 40% Peripheral HUD Right Split
+    //   Row 4: Translucent Apple Glass Footer Status Bar (24px)
+    // =========================================================================
+    ColumnLayout {
+        id: mainRootColumn
+        anchors.fill: parent
+        anchors.margins: 8
+        spacing: 6
+
+        // ---------------------------------------------------------------------
+        // ROW 1: TOP HEADER BAR (id: header, height: 52)
+        // ---------------------------------------------------------------------
+        Rectangle {
+            id: header
+            Layout.fillWidth: true
+            Layout.preferredHeight: 52
+            radius: 11
+            color: Qt.rgba(1, 1, 1, 0.05 + (root.glassOpacityPct / 100.0) * 0.08)
+            border.color: "#61BAA164" // rgba(186, 161, 100, 0.38)
+            border.width: 1
+
+            // Allow dragging the frameless window from empty space on the header bar
+            MouseArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.LeftButton
+                property point clickPos: Qt.point(0, 0)
+                onPressed: function(mouse) {
+                    clickPos = Qt.point(mouse.x, mouse.y);
+                }
+                onPositionChanged: function(mouse) {
+                    if (pressed && root.visibility !== Window.Maximized) {
+                        var dx = mouse.x - clickPos.x;
+                        var dy = mouse.y - clickPos.y;
+                        root.x += dx;
+                        root.y += dy;
                     }
-                    Text {
-                        anchors.centerIn: parent
-                        text: "AV"
-                        color: "white"
-                        font.bold: true
-                        font.pixelSize: 15
+                }
+                onDoubleClicked: {
+                    if (root.visibility === Window.Maximized) {
+                        root.showNormal();
+                    } else {
+                        root.showMaximized();
+                    }
+                }
+            }
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                spacing: 10
+
+                // 36x36 Circular Artificial Vision Emblem Badge (clicks re-open Splash Screen)
+                Rectangle {
+                    Layout.preferredWidth: 36
+                    Layout.preferredHeight: 36
+                    radius: 18
+                    color: "#1FBAA164" // rgba(186, 161, 100, 0.12)
+                    border.color: "#8CBAA164" // rgba(186, 161, 100, 0.55)
+                    border.width: 1
+
+                    Image {
+                        anchors.fill: parent
+                        anchors.margins: 5
+                        source: "assets/av_logo.png"
+                        fillMode: Image.PreserveAspectFit
+                        smooth: true
+                        mipmap: true
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            splashOverlay.loadProgress = 1.0;
+                            splashOverlay.opacity = 1.0;
+                            root.showSplashScreen = true;
+                        }
                     }
                 }
 
+                // Title & Subtitle Stack ("AV Scan" / "an Artificial Vision product")
                 ColumnLayout {
-                    spacing: 1
+                    spacing: 0
                     Text {
-                        text: "ARTIFICIAL VISION"
-                        color: "#94a3b8"
-                        font.bold: true
-                        font.pixelSize: 10
-                        font.letterSpacing: 1.5
-                    }
-                    Text {
-                        text: "AV SCAN"
-                        color: "#ffffff"
-                        font.bold: true
-                        font.pixelSize: 17
-                    }
-                    Text {
-                        text: "Find Your Sense."
-                        color: "#38bdf8"
-                        font.pixelSize: 11
-                    }
-                }
-            }
-
-            Rectangle {
-                width: 1
-                height: 38
-                color: "#28303e"
-                Layout.leftMargin: 8
-                Layout.rightMargin: 8
-            }
-
-            // Project Identification
-            ColumnLayout {
-                spacing: 2
-                RowLayout {
-                    spacing: 6
-                    Rectangle {
-                        width: 7
-                        height: 7
-                        radius: 3.5
-                        color: bridge.projectId !== "" ? "#10b981" : "#f59e0b"
-                    }
-                    Text {
-                        text: bridge.projectId !== "" ? "ACTIVE PROJECT" : "NO PROJECT LOADED"
-                        color: "#64748b"
-                        font.pixelSize: 9
-                        font.bold: true
-                        font.letterSpacing: 1.0
-                    }
-                }
-                Text {
-                    text: bridge.projectName
-                    color: "#f8fafc"
-                    font.bold: true
-                    font.pixelSize: 15
-                }
-                Text {
-                    text: bridge.projectId !== "" ? (bridge.projectId + " • " + bridge.projectCreatedAt) : "Create or Open a Project to enable capture"
-                    color: "#64748b"
-                    font.pixelSize: 11
-                }
-            }
-
-            // Project Action Buttons
-            RowLayout {
-                spacing: 8
-                Layout.leftMargin: 8
-
-                Button {
-                    id: newProjectBtn
-                    text: "+ New Project"
-                    onClicked: newProjectDialog.open()
-                    contentItem: Text {
-                        text: parent.text
-                        color: "white"
-                        font.pixelSize: 12
-                        font.bold: true
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    background: Rectangle {
-                        color: newProjectBtn.hovered ? "#334155" : "#1e293b"
-                        radius: 6
-                        border.color: "#475569"
-                    }
-                }
-
-                Button {
-                    id: openProjectBtn
-                    text: "Open Project..."
-                    onClicked: openProjectDialog.open()
-                    contentItem: Text {
-                        text: parent.text
-                        color: "#e2e8f0"
-                        font.pixelSize: 12
-                        font.bold: true
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    background: Rectangle {
-                        color: openProjectBtn.hovered ? "#334155" : "#1e293b"
-                        radius: 6
-                        border.color: "#334155"
-                    }
-                }
-
-                Button {
-                    id: headerOrientationDiagBtn
-                    text: "📐 Orientation Diagnostic"
-                    onClicked: {
-                        bridge.openOrientationDiagnostic();
-                        orientationDiagDialog.open();
-                    }
-                    contentItem: Text {
-                        text: parent.text
-                        color: "#c084fc"
-                        font.pixelSize: 12
-                        font.bold: true
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    background: Rectangle {
-                        color: headerOrientationDiagBtn.hovered ? "#3b0764" : "#1e1b4b"
-                        radius: 6
-                        border.color: "#a855f7"
-                    }
-                }
-
-                Button {
-                    id: headerMultiNodeBtn
-                    text: "🌐 Multi-Node Mesh"
-                    onClicked: {
-                        bridge.refreshMultiNodeDiscovery();
-                        multiNodeMeshDialog.open();
-                    }
-                    contentItem: Text {
-                        text: parent.text
-                        color: bridge.isMultiNodeSessionActive ? "#38bdf8" : "#94a3b8"
-                        font.pixelSize: 12
-                        font.bold: true
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    background: Rectangle {
-                        color: headerMultiNodeBtn.hovered ? "#0c4a6e" : (bridge.isMultiNodeSessionActive ? "#082f49" : "#1e293b")
-                        radius: 6
-                        border.color: bridge.isMultiNodeSessionActive ? "#38bdf8" : "#334155"
-                        border.width: bridge.isMultiNodeSessionActive ? 2 : 1
-                    }
-                }
-
-                Button {
-                    id: headerOfflineRegBtn
-                    text: "🔀 Register Scans (M9)"
-                    onClicked: {
-                        bridge.refreshSessionCaptures();
-                        bridge.refreshRegistrations();
-                        offlineRegistrationDialog.open();
-                    }
-                    contentItem: Text {
-                        text: parent.text
-                        color: bridge.isRegistrationActive ? "#00e5ff" : "#34d399"
-                        font.pixelSize: 12
-                        font.bold: true
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    background: Rectangle {
-                        color: headerOfflineRegBtn.hovered ? "#064e3b" : (bridge.isRegistrationActive ? "#083344" : "#062a22")
-                        radius: 6
-                        border.color: bridge.isRegistrationActive ? "#00e5ff" : "#059669"
-                        border.width: bridge.isRegistrationActive ? 2 : 1
-                    }
-                }
-            }
-
-            Item { Layout.fillWidth: true }
-
-            // Platform & Host Telemetry Pill
-            Rectangle {
-                height: 32
-                implicitWidth: hostLayout.implicitWidth + 24
-                radius: 16
-                color: "#181e28"
-                border.color: "#2a3445"
-
-                RowLayout {
-                    id: hostLayout
-                    anchors.centerIn: parent
-                    spacing: 8
-
-                    Rectangle {
-                        width: 8
-                        height: 8
-                        radius: 4
-                        color: "#10b981"
-                    }
-                    Text {
-                        text: bridge.hostPlatform
-                        color: "#e2e8f0"
-                        font.pixelSize: 11
-                        font.bold: true
-                    }
-                    Rectangle {
-                        width: 1
-                        height: 14
-                        color: "#334155"
-                    }
-                    Text {
-                        text: "RAM: " + bridge.hostMemory
-                        color: "#94a3b8"
-                        font.pixelSize: 11
-                    }
-                    Rectangle {
-                        width: 1
-                        height: 14
-                        color: "#334155"
-                    }
-                    Text {
-                        text: "Storage: " + bridge.hostDisk
-                        color: "#94a3b8"
-                        font.pixelSize: 11
-                    }
-                }
-            }
-        }
-    }
-
-    // Main Workspace: Split Dual Viewports (3D Perspective Spatial Map + 2D Ortho Floor Plan)
-    RowLayout {
-        id: viewportsArea
-        spacing: 12
-        anchors {
-            top: header.bottom
-            bottom: sensorDataBar.top
-            left: parent.left
-            right: parent.right
-            margins: 12
-            bottomMargin: 8
-        }
-
-        // ==========================================
-        // 1. 3D SPATIAL MAP VIEWPORT
-        // ==========================================
-        Rectangle {
-            id: panel3d
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.preferredWidth: 60
-            color: "#13161c"
-            radius: 8
-            border.color: "#232834"
-            clip: true
-
-            // Top Header Overlay
-            RowLayout {
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.margins: 12
-                z: 10
-
-                Rectangle {
-                    color: "#1e293b"
-                    radius: 4
-                    height: 24
-                    implicitWidth: view3dLabel.contentWidth + 14
-                    Text {
-                        id: view3dLabel
-                        anchors.centerIn: parent
-                        text: "3D SPATIAL MAP"
-                        color: "#38bdf8"
-                        font.bold: true
-                        font.pixelSize: 11
-                    }
-                }
-
-                // Preset Buttons
-                RowLayout {
-                    spacing: 4
-                    Button {
-                        text: "Recenter"
-                        implicitHeight: 24
-                        implicitWidth: 68
-                        onClicked: {
-                            bridge.recenter3D()
-                            canvas3d.requestPaint()
-                        }
-                        contentItem: Text { text: parent.text; color: "#cbd5e1"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                        background: Rectangle { color: parent.hovered ? "#334155" : "#1e2532"; radius: 4; border.color: "#334155" }
-                    }
-                    Button {
-                        text: "Isometric"
-                        implicitHeight: 24
-                        implicitWidth: 64
-                        onClicked: {
-                            bridge.setPreset3D("iso")
-                            canvas3d.requestPaint()
-                        }
-                        contentItem: Text { text: parent.text; color: "#cbd5e1"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                        background: Rectangle { color: parent.hovered ? "#334155" : "#1e2532"; radius: 4; border.color: "#334155" }
-                    }
-                    Button {
-                        text: "Top (Z)"
-                        implicitHeight: 24
-                        implicitWidth: 54
-                        onClicked: {
-                            bridge.setPreset3D("top")
-                            canvas3d.requestPaint()
-                        }
-                        contentItem: Text { text: parent.text; color: "#cbd5e1"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                        background: Rectangle { color: parent.hovered ? "#334155" : "#1e2532"; radius: 4; border.color: "#334155" }
-                    }
-                    Button {
-                        text: "Side"
-                        implicitHeight: 24
-                        implicitWidth: 46
-                        onClicked: {
-                            bridge.setPreset3D("side")
-                            canvas3d.requestPaint()
-                        }
-                        contentItem: Text { text: parent.text; color: "#cbd5e1"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                        background: Rectangle { color: parent.hovered ? "#334155" : "#1e2532"; radius: 4; border.color: "#334155" }
-                    }
-                }
-
-                Item { Layout.fillWidth: true }
-
-                // Dual-Sensor View Switcher (M6 Multi-Sensor Qualification)
-                // Multi-Sensor View Switcher (M6 Multi-Sensor Qualification)
-                RowLayout {
-                    visible: bridge.activeSensorCount > 1
-                    spacing: 6
-
-                    Rectangle {
-                        color: "#0f172a"
-                        radius: 4
-                        border.color: "#334155"
-                        implicitHeight: 24
-                        implicitWidth: extUnkText.contentWidth + 12
-                        Text {
-                            id: extUnkText
-                            anchors.centerIn: parent
-                            text: "Extrinsics: UNKNOWN (Independent SLAM, Unfused)"
-                            color: "#f59e0b"
-                            font.pixelSize: 10
-                            font.bold: true
-                        }
-                    }
-
-                    Repeater {
-                        model: bridge.activeSensors
-                        delegate: Rectangle {
-                            id: tabSensorBtn
-                            property var sData: modelData
-                            property bool isCurrent: bridge.activeDisplaySensor === sData.id
-
-                            implicitHeight: 28
-                            implicitWidth: tabBtnRow.implicitWidth + 20
-                            radius: 5
-                            color: isCurrent ? "#1e3a5f" : (tabMa.containsMouse ? "#1e293b" : "#0f172a")
-                            border.color: isCurrent ? "#38bdf8" : (tabMa.containsMouse ? "#64748b" : "#334155")
-                            border.width: isCurrent ? 2 : 1
-
-                            MouseArea {
-                                id: tabMa
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onPressed: {
-                                    bridge.setActiveDisplaySensor(sData.id)
-                                    canvas3d.requestPaint()
-                                    canvas2d.requestPaint()
-                                }
-                            }
-
-                            RowLayout {
-                                id: tabBtnRow
-                                anchors.centerIn: parent
-                                spacing: 5
-
-                                Text {
-                                    text: sData.icon || (sData.sensorType === "LIDAR" ? "📡" : (sData.id === "VITURE" ? "👓" : "📷"))
-                                    font.pixelSize: 11
-                                }
-
-                                Text {
-                                    text: sData.shortName
-                                    color: isCurrent ? "#ffffff" : (tabMa.containsMouse ? "#e2e8f0" : "#cbd5e1")
-                                    font.pixelSize: 10
-                                    font.bold: isCurrent
-                                }
-
-                                Text {
-                                    text: "(" + getSensorPoints(sData.id, sData.pointCount) + ")"
-                                    color: isCurrent ? "#7dd3fc" : "#94a3b8"
-                                    font.pixelSize: 10
-                                    font.family: "Monospace"
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Milestone 10: Multi-Node View Switcher (Independent coordinate frames, unaligned)
-                RowLayout {
-                    visible: bridge.isMultiNodeSessionActive
-                    spacing: 6
-
-                    Rectangle {
-                        color: "#082f49"
-                        radius: 4
-                        border.color: "#0284c7"
-                        implicitHeight: 24
-                        implicitWidth: mnRoleText.contentWidth + 12
-                        Text {
-                            id: mnRoleText
-                            anchors.centerIn: parent
-                            text: "MESH: " + bridge.nodeRole + " | NON-FUSED"
-                            color: "#38bdf8"
-                            font.pixelSize: 10
-                            font.bold: true
-                        }
-                    }
-
-                    Repeater {
-                        model: bridge.sessionMembers
-                        delegate: Rectangle {
-                            id: nodeTabBtn
-                            property var mData: modelData
-                            property bool isCurrent: bridge.selectedNodeViewIndex === index
-
-                            implicitHeight: 28
-                            implicitWidth: nodeTabBtnRow.implicitWidth + 16
-                            radius: 5
-                            color: isCurrent ? "#0c4a6e" : (nodeTabMa.containsMouse ? "#1e293b" : "#0f172a")
-                            border.color: isCurrent ? "#38bdf8" : (nodeTabMa.containsMouse ? "#64748b" : "#334155")
-                            border.width: isCurrent ? 2 : 1
-
-                            MouseArea {
-                                id: nodeTabMa
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    bridge.selectNodeView(index)
-                                }
-                            }
-
-                            RowLayout {
-                                id: nodeTabBtnRow
-                                anchors.centerIn: parent
-                                spacing: 5
-
-                                Text {
-                                    text: mData.isCoordinator ? "👑" : "💻"
-                                    font.pixelSize: 11
-                                }
-
-                                Text {
-                                    text: mData.displayName
-                                    color: isCurrent ? "#ffffff" : (nodeTabMa.containsMouse ? "#e2e8f0" : "#cbd5e1")
-                                    font.pixelSize: 10
-                                    font.bold: isCurrent
-                                }
-
-                                Rectangle {
-                                    width: 6
-                                    height: 6
-                                    radius: 3
-                                    color: mData.connected ? "#10b981" : "#ef4444"
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Rectangle {
-                    color: "#1e2532"
-                    radius: 4
-                    height: 24
-                    implicitWidth: points3dLabel.contentWidth + 14
-                    Text {
-                        id: points3dLabel
-                        anchors.centerIn: parent
-                        text: bridge.isDualSensorMode ?
-                              ("Total Points: " + bridge.pointsCaptured) :
-                              (bridge.isCapturing ? (bridge.pointsCaptured + " Points (Real)") : "Common AV Map")
-                        color: "#94a3b8"
-                        font.pixelSize: 11
-                        font.bold: true
-                    }
-                }
-            }
-
-            // Milestone 9: Registration Active In-Viewport HUD Badge
-            Rectangle {
-                id: regViewportHud
-                visible: bridge.isRegistrationActive
-                z: 20
-                anchors {
-                    top: parent.top
-                    topMargin: 46
-                    left: parent.left
-                    leftMargin: 12
-                }
-                color: "#0a192f"
-                border.color: "#00e5ff"
-                border.width: 1.5
-                radius: 6
-                implicitHeight: regHudRow.implicitHeight + 12
-                implicitWidth: regHudRow.implicitWidth + 20
-
-                RowLayout {
-                    id: regHudRow
-                    anchors.centerIn: parent
-                    spacing: 12
-
-                    RowLayout {
-                        spacing: 6
-                        Rectangle {
-                            width: 8
-                            height: 8
-                            radius: 4
-                            color: "#00e5ff"
-                        }
-                        Text {
-                            text: "REGISTRATION INSPECTION ACTIVE"
-                            color: "#00e5ff"
-                            font.bold: true
-                            font.pixelSize: 10
-                            font.letterSpacing: 0.8
-                        }
-                    }
-
-                    Rectangle { width: 1; height: 16; color: "#1e3a5f" }
-
-                    Text {
-                        text: "Overlap: " + bridge.registrationOverlapPercent.toFixed(1) + "%"
-                        color: "#38bdf8"
-                        font.bold: true
-                        font.pixelSize: 10
-                    }
-
-                    Text {
-                        text: "RMSE: " + bridge.registrationRmseMm.toFixed(1) + " mm"
-                        color: "#a7f3d0"
-                        font.bold: true
-                        font.pixelSize: 10
-                    }
-
-                    Rectangle { width: 1; height: 16; color: "#1e3a5f" }
-
-                    // View Mode Toggle Pills
-                    RowLayout {
-                        spacing: 4
-                        Repeater {
-                            model: [
-                                { label: "Combined", mode: 0 },
-                                { label: "Ref (Airy)", mode: 1 },
-                                { label: "Mov (Gemini)", mode: 2 }
-                            ]
-                            delegate: Rectangle {
-                                property bool isSel: bridge.registrationViewMode === modelData.mode
-                                implicitWidth: vText.contentWidth + 12
-                                implicitHeight: 22
-                                radius: 4
-                                color: isSel ? "#0284c7" : "#0f172a"
-                                border.color: isSel ? "#38bdf8" : "#334155"
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        bridge.setRegistrationViewMode(modelData.mode);
-                                        canvas3d.requestPaint();
-                                        canvas2d.requestPaint();
-                                    }
-                                }
-                                Text {
-                                    id: vText
-                                    anchors.centerIn: parent
-                                    text: modelData.label
-                                    color: isSel ? "white" : "#94a3b8"
-                                    font.pixelSize: 9
-                                    font.bold: isSel
-                                }
-                            }
-                        }
-                    }
-
-                    Rectangle { width: 1; height: 16; color: "#1e3a5f" }
-
-                    // Color Differentiation Schemes: True RGB vs Cyan/Amber Diagnostic
-                    RowLayout {
-                        spacing: 4
-                        Rectangle {
-                            implicitWidth: rgbBtnText.contentWidth + 14
-                            implicitHeight: 22
-                            radius: 4
-                            color: bridge.registrationColorMode === 1 ? "#0f766e" : "#0f172a"
-                            border.color: bridge.registrationColorMode === 1 ? "#14b8a6" : "#334155"
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    bridge.setRegistrationColorMode(1);
-                                    canvas3d.requestPaint();
-                                    canvas2d.requestPaint();
-                                }
-                            }
-                            Text {
-                                id: rgbBtnText
-                                anchors.centerIn: parent
-                                text: "📷 True Merged RGB"
-                                color: bridge.registrationColorMode === 1 ? "#5eead4" : "#94a3b8"
-                                font.pixelSize: 9
-                                font.bold: bridge.registrationColorMode === 1
-                            }
-                        }
-
-                        Rectangle {
-                            implicitWidth: diffBtnText.contentWidth + 14
-                            implicitHeight: 22
-                            radius: 4
-                            color: bridge.registrationColorMode === 0 ? "#7c2d12" : "#0f172a"
-                            border.color: bridge.registrationColorMode === 0 ? "#f97316" : "#334155"
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    bridge.setRegistrationColorMode(0);
-                                    canvas3d.requestPaint();
-                                    canvas2d.requestPaint();
-                                }
-                            }
-                            Text {
-                                id: diffBtnText
-                                anchors.centerIn: parent
-                                text: "🎨 Cyan / Amber Diagnostic"
-                                color: bridge.registrationColorMode === 0 ? "#fed7aa" : "#94a3b8"
-                                font.pixelSize: 9
-                                font.bold: bridge.registrationColorMode === 0
-                            }
-                        }
-                    }
-
-                    // Exit Inspection Button
-                    Rectangle {
-                        implicitWidth: 22
-                        implicitHeight: 22
-                        radius: 4
-                        color: "#7f1d1d"
-                        border.color: "#ef4444"
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                bridge.clearActiveRegistration();
-                                canvas3d.requestPaint();
-                                canvas2d.requestPaint();
-                            }
-                        }
-                        Text {
-                            anchors.centerIn: parent
-                            text: "✕"
-                            color: "white"
-                            font.pixelSize: 10
-                            font.bold: true
-                        }
-                    }
-                }
-            }
-
-            // Interactive 3D Canvas
-            Canvas {
-                id: canvas3d
-                anchors.fill: parent
-
-                Connections {
-                    target: bridge
-                    function onCam3DChanged() { canvas3d.requestPaint(); }
-                    function onPointsCapturedChanged() { canvas3d.requestPaint(); }
-                    function onCaptureStateChanged() { canvas3d.requestPaint(); }
-                    function onMapDataUpdated() { canvas3d.requestPaint(); }
-                    function onPoseChanged() { canvas3d.requestPaint(); }
-                    function onActiveDisplaySensorChanged() { canvas3d.requestPaint(); }
-                    function onActiveRegistrationChanged() { canvas3d.requestPaint(); }
-                    function onRegistrationViewModeChanged() { canvas3d.requestPaint(); }
-                    function onRegistrationColorModeChanged() { canvas3d.requestPaint(); }
-                }
-
-                onPaint: {
-                    var ctx = getContext("2d");
-                    ctx.clearRect(0, 0, width, height);
-
-                    var cx = width * 0.5;
-                    var cy = height * 0.55;
-
-                    // Camera math (Spherical coordinates to cartesian eye position in Canonical AV frame: +X Fwd, +Y Left, +Z Up)
-                    var yawRad = bridge.camYaw3D * Math.PI / 180.0;
-                    var pitchRad = bridge.camPitch3D * Math.PI / 180.0;
-                    var dist = bridge.camDistance3D;
-
-                    var eyeX = bridge.camTargetX3D - dist * Math.cos(pitchRad) * Math.cos(yawRad);
-                    var eyeY = bridge.camTargetY3D - dist * Math.cos(pitchRad) * Math.sin(yawRad);
-                    var eyeZ = bridge.camTargetZ3D + dist * Math.sin(pitchRad);
-
-                    var targetX = bridge.camTargetX3D;
-                    var targetY = bridge.camTargetY3D;
-                    var targetZ = bridge.camTargetZ3D;
-
-                    // Forward vector
-                    var fx = targetX - eyeX;
-                    var fy = targetY - eyeY;
-                    var fz = targetZ - eyeZ;
-                    var fLen = Math.sqrt(fx * fx + fy * fy + fz * fz);
-                    if (fLen > 0.0001) { fx /= fLen; fy /= fLen; fz /= fLen; }
-
-                    // Up vector (world Z is [0, 0, 1])
-                    var ux_w = 0, uy_w = 0, uz_w = 1;
-                    // Right = forward x up_w
-                    var rx = fy * uz_w - fz * uy_w;
-                    var ry = fz * ux_w - fx * uz_w;
-                    var rz = fx * uy_w - fy * ux_w;
-                    var rLen = Math.sqrt(rx * rx + ry * ry + rz * rz);
-                    if (rLen > 0.0001) { rx /= rLen; ry /= rLen; rz /= rLen; } else { rx = 1; ry = 0; rz = 0; }
-
-                    // Up = right x forward
-                    var ux = ry * fz - rz * fy;
-                    var uy = rz * fx - rx * fz;
-                    var uz = rx * fy - ry * fx;
-
-                    var focal = (height * 0.5) / Math.tan(30.0 * Math.PI / 180.0);
-
-                    function project(x, y, z) {
-                        var dx = x - eyeX;
-                        var dy = y - eyeY;
-                        var dz = z - eyeZ;
-
-                        var camX = dx * rx + dy * ry + dz * rz;
-                        var camY = dx * ux + dy * uy + dz * uz;
-                        var camZ = dx * fx + dy * fy + dz * fz;
-
-                        if (camZ <= 0.1) return null;
-                        return {
-                            x: cx + (camX / camZ) * focal,
-                            y: cy - (camY / camZ) * focal,
-                            depth: camZ
-                        };
-                    }
-
-                    // 1. Draw 3D Ground Reference Grid at Z=0 (-5m to +5m)
-                    ctx.lineWidth = 1;
-                    for (var gx = -5; gx <= 5; ++gx) {
-                        var p1 = project(gx, -5, 0);
-                        var p2 = project(gx, 5, 0);
-                        if (p1 && p2) {
-                            ctx.strokeStyle = (gx === 0) ? "#2e3b52" : "#1a212d";
-                            ctx.beginPath();
-                            ctx.moveTo(p1.x, p1.y);
-                            ctx.lineTo(p2.x, p2.y);
-                            ctx.stroke();
-                        }
-                    }
-                    for (var gy = -5; gy <= 5; ++gy) {
-                        var p3 = project(-5, gy, 0);
-                        var p4 = project(5, gy, 0);
-                        if (p3 && p4) {
-                            ctx.strokeStyle = (gy === 0) ? "#2e3b52" : "#1a212d";
-                            ctx.beginPath();
-                            ctx.moveTo(p3.x, p3.y);
-                            ctx.lineTo(p4.x, p4.y);
-                            ctx.stroke();
-                        }
-                    }
-
-                    // 2. Draw 3D Coordinate Axes at Origin (X: Red, Y: Green, Z: Blue)
-                    var o = project(0, 0, 0);
-                    var axX = project(2.0, 0, 0);
-                    var axY = project(0, 2.0, 0);
-                    var axZ = project(0, 0, 2.0);
-
-                    if (o && axX) {
-                        ctx.strokeStyle = "#ef4444";
-                        ctx.lineWidth = 2.5;
-                        ctx.beginPath();
-                        ctx.moveTo(o.x, o.y);
-                        ctx.lineTo(axX.x, axX.y);
-                        ctx.stroke();
-                        ctx.fillStyle = "#ef4444";
-                        ctx.font = "bold 11px sans-serif";
-                        ctx.fillText("+X (2m)", axX.x + 4, axX.y);
-                    }
-                    if (o && axY) {
-                        ctx.strokeStyle = "#10b981";
-                        ctx.lineWidth = 2.5;
-                        ctx.beginPath();
-                        ctx.moveTo(o.x, o.y);
-                        ctx.lineTo(axY.x, axY.y);
-                        ctx.stroke();
-                        ctx.fillStyle = "#10b981";
-                        ctx.font = "bold 11px sans-serif";
-                        ctx.fillText("+Y (2m)", axY.x + 4, axY.y);
-                    }
-                    if (o && axZ) {
-                        ctx.strokeStyle = "#3b82f6";
-                        ctx.lineWidth = 2.5;
-                        ctx.beginPath();
-                        ctx.moveTo(o.x, o.y);
-                        ctx.lineTo(axZ.x, axZ.y);
-                        ctx.stroke();
-                        ctx.fillStyle = "#3b82f6";
-                        ctx.font = "bold 11px sans-serif";
-                        ctx.fillText("+Z (2m)", axZ.x + 4, axZ.y);
-                    }
-
-                    // 3. Draw Camera Look-At Target Reticle
-                    var ptTarget = project(targetX, targetY, targetZ);
-                    if (ptTarget) {
-                        ctx.strokeStyle = "#f59e0b";
-                        ctx.lineWidth = 1.5;
-                        ctx.beginPath();
-                        ctx.arc(ptTarget.x, ptTarget.y, 5, 0, 2 * Math.PI);
-                        ctx.stroke();
-                    }
-
-                    // 4. Draw Real 3D Trajectory Path
-                    var traj = bridge.getTrajectoryPoints();
-                    if (traj.length > 1) {
-                        ctx.strokeStyle = "#f59e0b";
-                        ctx.lineWidth = 2.5;
-                        ctx.beginPath();
-                        var first = true;
-                        for (var ti = 0; ti < traj.length; ++ti) {
-                            var ptT = project(traj[ti][0], traj[ti][1], traj[ti][2]);
-                            if (ptT) {
-                                if (first) {
-                                    ctx.moveTo(ptT.x, ptT.y);
-                                    first = false;
-                                } else {
-                                    ctx.lineTo(ptT.x, ptT.y);
-                                }
-                            }
-                        }
-                        ctx.stroke();
-                    }
-
-                    // 5. Draw Real Point Cloud Points (Real RGB or Neutral Grayscale Intensity)
-                    var pts = bridge.getDisplayPoints(30000);
-                    if (pts.length > 0) {
-                        for (var pi = 0; pi < pts.length; ++pi) {
-                            var pt = pts[pi];
-                            var p3 = project(pt[0], pt[1], pt[2]);
-                            if (p3) {
-                                if (pt.length >= 8 && pt[7] === true) {
-                                    ctx.fillStyle = "rgb(" + pt[4] + "," + pt[5] + "," + pt[6] + ")";
-                                } else {
-                                    // True neutral grayscale intensity visualization for geometry (Milestone 5):
-                                    // Pure monochrome surface reflectance (R=G=B) with zero artificial tinting.
-                                    var rawI = (pt.length >= 4 && pt[3] !== undefined) ? pt[3] : 0.8;
-                                    var intVal = Math.min(255, Math.max(50, (rawI <= 1.0 ? Math.round(rawI * 255) : Math.round(rawI))));
-                                    ctx.fillStyle = "rgb(" + intVal + "," + intVal + "," + intVal + ")";
-                                }
-                                ctx.fillRect(p3.x - 1, p3.y - 1, 2.5, 2.5);
-                            }
-                        }
-                    }
-
-                    // 6. Draw Scanner Pose & Heading Vector in 3D
-                    var scX = bridge.currentPoseX;
-                    var scY = bridge.currentPoseY;
-                    var scZ = bridge.currentPoseZ;
-                    var scYaw = bridge.currentYaw;
-                    var ptScanner = project(scX, scY, scZ);
-                    if (ptScanner) {
-                        var fwdX = scX + 0.6 * Math.cos(scYaw);
-                        var fwdY = scY + 0.6 * Math.sin(scYaw);
-                        var ptFwd = project(fwdX, fwdY, scZ);
-
-                        // Scanner position marker
-                        ctx.fillStyle = "#38bdf8";
-                        ctx.beginPath();
-                        ctx.arc(ptScanner.x, ptScanner.y, 5, 0, 2 * Math.PI);
-                        ctx.fill();
-                        ctx.strokeStyle = "#ffffff";
-                        ctx.lineWidth = 1.5;
-                        ctx.stroke();
-
-                        // Heading arrow
-                        if (ptFwd) {
-                            ctx.strokeStyle = "#ef4444";
-                            ctx.lineWidth = 2.5;
-                            ctx.beginPath();
-                            ctx.moveTo(ptScanner.x, ptScanner.y);
-                            ctx.lineTo(ptFwd.x, ptFwd.y);
-                            ctx.stroke();
-                        }
-                    }
-                }
-            }
-
-            // Mouse Area for 3D Interaction: Orbit, Pan, Zoom
-            MouseArea {
-                id: mouseArea3d
-                anchors.fill: parent
-                hoverEnabled: true
-                acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
-
-                property real lastX: 0
-                property real lastY: 0
-
-                onPressed: {
-                    lastX = mouse.x
-                    lastY = mouse.y
-                }
-
-                onPositionChanged: {
-                    var dx = mouse.x - lastX
-                    var dy = mouse.y - lastY
-                    lastX = mouse.x
-                    lastY = mouse.y
-
-                    if (mouse.buttons & Qt.RightButton || (mouse.buttons & Qt.LeftButton && (mouse.modifiers & Qt.ShiftModifier))) {
-                        // Pan 3D
-                        bridge.pan3D(dx, dy)
-                    } else if (mouse.buttons & Qt.LeftButton) {
-                        // Orbit 3D
-                        bridge.orbit3D(dx, dy)
-                    }
-                }
-
-                onWheel: {
-                    bridge.zoom3D(wheel.angleDelta.y)
-                }
-            }
-
-            // Status Notice Overlay when Map is Empty
-            ColumnLayout {
-                anchors.centerIn: parent
-                spacing: 8
-                visible: bridge.pointsCaptured === 0 && !bridge.hasMapData
-
-                Rectangle {
-                    Layout.alignment: Qt.AlignHCenter
-                    width: 44
-                    height: 44
-                    radius: 22
-                    color: "#18202c"
-                    border.color: "#283548"
-                    Text {
-                        anchors.centerIn: parent
-                        text: "3D"
-                        color: "#38bdf8"
-                        font.bold: true
-                        font.pixelSize: 15
-                    }
-                }
-                Text {
-                    text: bridge.isCapturing ? ("Spatial Session Active (Ingesting " + bridge.selectedScannerName + ")") : "AV Common Map Viewport"
-                    color: "#e2e8f0"
-                    font.bold: true
-                    font.pixelSize: 14
-                    horizontalAlignment: Text.AlignHCenter
-                    Layout.alignment: Qt.AlignHCenter
-                }
-                Text {
-                    text: "Hardware Pipeline: " + bridge.selectedScannerName + " (" + bridge.sensorStatus + ")"
-                    color: "#64748b"
-                    font.pixelSize: 12
-                    horizontalAlignment: Text.AlignHCenter
-                    Layout.alignment: Qt.AlignHCenter
-                }
-            }
-
-            // Bottom HUD: 3D Camera Telemetry & Gesture Guide
-            Rectangle {
-                anchors.bottom: parent.bottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.margins: 10
-                height: 28
-                radius: 4
-                color: "#181d26"
-                border.color: "#232b38"
-
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 12
-                    anchors.rightMargin: 12
-
-                    Text {
-                        text: "Yaw: " + bridge.camYaw3D.toFixed(1) + "°  |  Pitch: " + bridge.camPitch3D.toFixed(1) + "°  |  Distance: " + bridge.camDistance3D.toFixed(1) + "m  |  Target: (" + bridge.camTargetX3D.toFixed(2) + ", " + bridge.camTargetY3D.toFixed(2) + ")"
-                        color: "#94a3b8"
-                        font.pixelSize: 10
-                        font.family: "Monospace"
-                    }
-
-                    Item { Layout.fillWidth: true }
-
-                    Text {
-                        text: "Orbit: Left Drag  •  Pan: Right Drag / Shift+Drag  •  Zoom: Wheel"
-                        color: "#64748b"
-                        font.pixelSize: 10
-                    }
-                }
-            }
-        }
-
-        // ==========================================
-        // 2. 2D FLOOR PLAN / TOP-DOWN VIEWPORT
-        // ==========================================
-        Rectangle {
-            id: panel2d
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.preferredWidth: 40
-            color: "#13161c"
-            radius: 8
-            border.color: "#232834"
-            clip: true
-
-            // Top Header Overlay
-            RowLayout {
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.margins: 12
-                z: 10
-
-                Rectangle {
-                    color: "#1e293b"
-                    radius: 4
-                    height: 24
-                    implicitWidth: view2dLabel.contentWidth + 14
-                    Text {
-                        id: view2dLabel
-                        anchors.centerIn: parent
-                        text: "2D FLOOR PLAN"
-                        color: "#34d399"
-                        font.bold: true
-                        font.pixelSize: 11
-                    }
-                }
-
-                // Controls
-                RowLayout {
-                    spacing: 4
-                    Button {
-                        text: "Recenter"
-                        implicitHeight: 24
-                        implicitWidth: 68
-                        onClicked: {
-                            bridge.recenter2D()
-                            canvas2d.requestPaint()
-                        }
-                        contentItem: Text { text: parent.text; color: "#cbd5e1"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                        background: Rectangle { color: parent.hovered ? "#334155" : "#1e2532"; radius: 4; border.color: "#334155" }
-                    }
-                    Button {
-                        text: "+"
-                        implicitHeight: 24
-                        implicitWidth: 32
-                        onClicked: {
-                            bridge.zoom2DByFactor(1.25)
-                            canvas2d.requestPaint()
-                        }
-                        contentItem: Text { text: parent.text; color: "#cbd5e1"; font.pixelSize: 12; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                        background: Rectangle { color: parent.hovered ? "#334155" : "#1e2532"; radius: 4; border.color: "#334155" }
-                    }
-                    Button {
-                        text: "-"
-                        implicitHeight: 24
-                        implicitWidth: 32
-                        onClicked: {
-                            bridge.zoom2DByFactor(0.8)
-                            canvas2d.requestPaint()
-                        }
-                        contentItem: Text { text: parent.text; color: "#cbd5e1"; font.pixelSize: 12; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                        background: Rectangle { color: parent.hovered ? "#334155" : "#1e2532"; radius: 4; border.color: "#334155" }
-                    }
-                }
-
-                Item { Layout.fillWidth: true }
-
-                Rectangle {
-                    color: "#1e2532"
-                    radius: 4
-                    height: 24
-                    implicitWidth: mode2dLabel.contentWidth + 14
-                    Text {
-                        id: mode2dLabel
-                        anchors.centerIn: parent
-                        text: "Top-Down Ortho"
-                        color: "#94a3b8"
-                        font.pixelSize: 11
-                        font.bold: true
-                    }
-                }
-            }
-
-            // Interactive 2D Canvas
-            Canvas {
-                id: canvas2d
-                anchors.fill: parent
-
-                Connections {
-                    target: bridge
-                    function onCam2DChanged() { canvas2d.requestPaint(); }
-                    function onCaptureStateChanged() { canvas2d.requestPaint(); }
-                    function onPointsCapturedChanged() { canvas2d.requestPaint(); }
-                    function onMapDataUpdated() { canvas2d.requestPaint(); }
-                    function onPoseChanged() { canvas2d.requestPaint(); }
-                    function onActiveDisplaySensorChanged() { canvas2d.requestPaint(); }
-                    function onActiveRegistrationChanged() { canvas2d.requestPaint(); }
-                    function onRegistrationViewModeChanged() { canvas2d.requestPaint(); }
-                    function onRegistrationColorModeChanged() { canvas2d.requestPaint(); }
-                }
-
-                onPaint: {
-                    var ctx = getContext("2d");
-                    ctx.clearRect(0, 0, width, height);
-
-                    var cx = width * 0.5;
-                    var cy = height * 0.5;
-                    var zoom = bridge.zoom2D; // pixels per meter
-                    var panX = bridge.pan2DX;
-                    var panY = bridge.pan2DY;
-
-                    function worldToScreen(wx, wy) {
-                        return {
-                            x: cx - (wy - panY) * zoom, // Canonical AV: +Y (Left) moves screen Left
-                            y: cy - (wx - panX) * zoom  // Canonical AV: +X (Forward) moves screen Up
-                        };
-                    }
-
-                    // 1. Draw Orthogonal Metric Grid
-                    // Determine grid line step based on zoom
-                    var step = (zoom > 50) ? 1.0 : (zoom > 15) ? 2.0 : 5.0;
-
-                    var minWorldX = panX - (cy / zoom) - step;
-                    var maxWorldX = panX + (cy / zoom) + step;
-                    var minWorldY = panY - (cx / zoom) - step;
-                    var maxWorldY = panY + (cx / zoom) + step;
-
-                    var startX = Math.floor(minWorldX / step) * step;
-                    var startY = Math.floor(minWorldY / step) * step;
-
-                    ctx.lineWidth = 1;
-                    ctx.font = "9px monospace";
-
-                    // Constant X lines (horizontal across screen)
-                    for (var x = startX; x <= maxWorldX; x += step) {
-                        var pLeft = worldToScreen(x, maxWorldY);
-                        var pRight = worldToScreen(x, minWorldY);
-                        var isZeroX = Math.abs(x) < 0.001;
-
-                        ctx.strokeStyle = isZeroX ? "#ef4444" : ((Math.round(x) % 5 === 0) ? "#263244" : "#1a212d");
-                        ctx.beginPath();
-                        ctx.moveTo(pLeft.x, pLeft.y);
-                        ctx.lineTo(pRight.x, pRight.y);
-                        ctx.stroke();
-
-                        // Label
-                        if (Math.round(x) % 5 === 0 || isZeroX) {
-                            ctx.fillStyle = isZeroX ? "#ef4444" : "#475569";
-                            ctx.fillText(x.toFixed(0) + "m", cx + 6, pLeft.y - 3);
-                        }
-                    }
-
-                    // Constant Y lines (vertical down screen)
-                    for (var y = startY; y <= maxWorldY; y += step) {
-                        var pTop = worldToScreen(maxWorldX, y);
-                        var pBottom = worldToScreen(minWorldX, y);
-                        var isZeroY = Math.abs(y) < 0.001;
-
-                        ctx.strokeStyle = isZeroY ? "#10b981" : ((Math.round(y) % 5 === 0) ? "#263244" : "#1a212d");
-                        ctx.beginPath();
-                        ctx.moveTo(pTop.x, pTop.y);
-                        ctx.lineTo(pBottom.x, pBottom.y);
-                        ctx.stroke();
-
-                        // Label
-                        if (Math.round(y) % 5 === 0 || isZeroY) {
-                            ctx.fillStyle = isZeroY ? "#10b981" : "#475569";
-                            ctx.fillText(y.toFixed(0) + "m", pBottom.x + 3, cy + 12);
-                        }
-                    }
-
-                    // 2. Origin Crosshair
-                    var orig = worldToScreen(0, 0);
-                    ctx.strokeStyle = "#f59e0b";
-                    ctx.lineWidth = 2;
-                    ctx.beginPath();
-                    ctx.arc(orig.x, orig.y, 4, 0, 2 * Math.PI);
-                    ctx.stroke();
-
-                    // 3. Direction Compass (Top-Right: +X Forward is UP)
-                    var compX = width - 42;
-                    var compY = 56;
-                    ctx.fillStyle = "#1e293b";
-                    ctx.beginPath();
-                    ctx.arc(compX, compY, 18, 0, 2 * Math.PI);
-                    ctx.fill();
-                    ctx.strokeStyle = "#38bdf8";
-                    ctx.lineWidth = 1.5;
-                    ctx.stroke();
-
-                    // Forward Arrow pointing UP (+X)
-                    ctx.fillStyle = "#ef4444";
-                    ctx.beginPath();
-                    ctx.moveTo(compX, compY - 14);
-                    ctx.lineTo(compX - 5, compY + 4);
-                    ctx.lineTo(compX + 5, compY + 4);
-                    ctx.closePath();
-                    ctx.fill();
-
-                    ctx.fillStyle = "white";
-                    ctx.font = "bold 9px sans-serif";
-                    ctx.fillText("+X", compX - 6.5, compY - 16);
-
-                    // 4. Metric Scale Bar (Bottom-Left)
-                    var barPixels = zoom * 1.0; // 1 meter bar
-                    var barX = 20;
-                    var barY = height - 44;
-                    ctx.strokeStyle = "#cbd5e1";
-                    ctx.lineWidth = 2;
-                    ctx.beginPath();
-                    ctx.moveTo(barX, barY);
-                    ctx.lineTo(barX + barPixels, barY);
-                    ctx.moveTo(barX, barY - 4);
-                    ctx.lineTo(barX, barY + 4);
-                    ctx.moveTo(barX + barPixels, barY - 4);
-                    ctx.lineTo(barX + barPixels, barY + 4);
-                    ctx.stroke();
-
-                    ctx.fillStyle = "#cbd5e1";
-                    ctx.font = "bold 10px monospace";
-                    ctx.fillText("1.0 m", barX + (barPixels * 0.5) - 14, barY - 6);
-
-                    // 5. Draw Real 2D Trajectory Path
-                    var traj2d = bridge.getTrajectoryPoints();
-                    if (traj2d.length > 1) {
-                        ctx.strokeStyle = "#f59e0b";
-                        ctx.lineWidth = 2.5;
-                        ctx.beginPath();
-                        for (var tj = 0; tj < traj2d.length; ++tj) {
-                            var sP = worldToScreen(traj2d[tj][0], traj2d[tj][1]);
-                            if (tj === 0) ctx.moveTo(sP.x, sP.y);
-                            else ctx.lineTo(sP.x, sP.y);
-                        }
-                        ctx.stroke();
-                    }
-
-                    // 6. Draw Real 2D Point Cloud (Floor Plan Projection with Matching Neutral Grayscale)
-                    var pts2d = bridge.getDisplayPoints(30000);
-                    if (pts2d.length > 0) {
-                        for (var pk = 0; pk < pts2d.length; ++pk) {
-                            var p2 = pts2d[pk];
-                            var sPt = worldToScreen(p2[0], p2[1]);
-                            if (p2.length >= 8 && p2[7] === true) {
-                                ctx.fillStyle = "rgb(" + p2[4] + "," + p2[5] + "," + p2[6] + ")";
-                            } else {
-                                // Match 3D viewport: pure monochrome grayscale surface reflectance
-                                var rawI2 = (p2.length >= 4 && p2[3] !== undefined) ? p2[3] : 0.8;
-                                var intVal2 = Math.min(255, Math.max(50, (rawI2 <= 1.0 ? Math.round(rawI2 * 255) : Math.round(rawI2))));
-                                ctx.fillStyle = "rgb(" + intVal2 + "," + intVal2 + "," + intVal2 + ")";
-                            }
-                            ctx.fillRect(sPt.x - 1, sPt.y - 1, 2, 2);
-                        }
-                    }
-
-                    // 7. Draw Scanner 2D Pose & Directional Heading Cone
-                    var sc2X = bridge.currentPoseX;
-                    var sc2Y = bridge.currentPoseY;
-                    var sc2Yaw = bridge.currentYaw;
-                    var sScanner = worldToScreen(sc2X, sc2Y);
-
-                    // Heading Cone (Forward field of view: heading 0 points UP (+X))
-                    var coneLen = 22; // pixels
-                    var coneAngle = 0.45; // ~26 deg
-                    var tipX = sScanner.x - coneLen * Math.sin(sc2Yaw);
-                    var tipY = sScanner.y - coneLen * Math.cos(sc2Yaw);
-                    var leftX = sScanner.x - (coneLen * 0.7) * Math.sin(sc2Yaw + coneAngle);
-                    var leftY = sScanner.y - (coneLen * 0.7) * Math.cos(sc2Yaw + coneAngle);
-                    var rightX = sScanner.x - (coneLen * 0.7) * Math.sin(sc2Yaw - coneAngle);
-                    var rightY = sScanner.y - (coneLen * 0.7) * Math.cos(sc2Yaw - coneAngle);
-
-                    ctx.fillStyle = "rgba(56, 189, 248, 0.35)";
-                    ctx.beginPath();
-                    ctx.moveTo(sScanner.x, sScanner.y);
-                    ctx.lineTo(leftX, leftY);
-                    ctx.lineTo(tipX, tipY);
-                    ctx.lineTo(rightX, rightY);
-                    ctx.closePath();
-                    ctx.fill();
-
-                    // Scanner Center Dot
-                    ctx.fillStyle = "#38bdf8";
-                    ctx.beginPath();
-                    ctx.arc(sScanner.x, sScanner.y, 4.5, 0, 2 * Math.PI);
-                    ctx.fill();
-                    ctx.strokeStyle = "#ffffff";
-                    ctx.lineWidth = 1.5;
-                    ctx.stroke();
-                }
-            }
-
-            // Mouse Area for 2D Interaction: Pan and Zoom
-            MouseArea {
-                id: mouseArea2d
-                anchors.fill: parent
-                hoverEnabled: true
-                acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
-
-                property real lastX: 0
-                property real lastY: 0
-
-                onPressed: {
-                    lastX = mouse.x
-                    lastY = mouse.y
-                }
-
-                onPositionChanged: {
-                    var dx = mouse.x - lastX
-                    var dy = mouse.y - lastY
-                    lastX = mouse.x
-                    lastY = mouse.y
-
-                    if (mouse.buttons & (Qt.LeftButton | Qt.RightButton | Qt.MiddleButton)) {
-                        bridge.pan2D(dx, dy)
-                    }
-                }
-
-                onWheel: {
-                    bridge.zoom2DByFactor(wheel.angleDelta.y > 0 ? 1.15 : 0.85)
-                }
-            }
-
-            // Bottom HUD: 2D Scale and Center Coordinates
-            Rectangle {
-                anchors.bottom: parent.bottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.margins: 10
-                height: 28
-                radius: 4
-                color: "#181d26"
-                border.color: "#232b38"
-
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 12
-                    anchors.rightMargin: 12
-
-                    Text {
-                        text: "Scale: " + bridge.zoom2D.toFixed(1) + " px/m  |  Center: (" + bridge.pan2DX.toFixed(2) + "m, " + bridge.pan2DY.toFixed(2) + "m)"
-                        color: "#94a3b8"
-                        font.pixelSize: 10
-                        font.family: "Monospace"
-                    }
-
-                    Item { Layout.fillWidth: true }
-
-                    Text {
-                        text: "Pan: Drag  •  Zoom: Scroll"
-                        color: "#64748b"
-                        font.pixelSize: 10
-                    }
-                }
-            }
-        }
-    }
-
-    // ==========================================
-    // 3. SENSOR TELEMETRY & SYSTEM METRICS BAR (ABOVE CONFIG & CONTROLS)
-    // ==========================================
-    Rectangle {
-        id: sensorDataBar
-        height: 64
-        color: "#12151c"
-        anchors {
-            bottom: bottomBar.top
-            left: parent.left
-            right: parent.right
-        }
-
-        // Top border line
-        Rectangle {
-            anchors.top: parent.top
-            anchors.left: parent.left
-            anchors.right: parent.right
-            height: 1
-            color: "#1e2430"
-        }
-
-        RowLayout {
-            anchors.fill: parent
-            anchors.leftMargin: 16
-            anchors.rightMargin: 16
-            spacing: 16
-
-            // Section Label Badge
-            Rectangle {
-                implicitWidth: 104
-                implicitHeight: 28
-                radius: 4
-                color: "#1a202c"
-                border.color: "#2d3748"
-                RowLayout {
-                    anchors.centerIn: parent
-                    spacing: 4
-                    Text {
-                        text: "LIVE SENSORS"
-                        color: "#38bdf8"
-                        font.pixelSize: 10
-                        font.bold: true
+                        text: "AV Scan"
+                        color: root.avWhiteWarm
+                        font.pixelSize: 18
+                        font.weight: Font.DemiBold
                         font.letterSpacing: 0.8
                     }
+                    Text {
+                        text: "an Artificial Vision product"
+                        color: "#B8FCFBF8"
+                        font.pixelSize: 10
+                        font.letterSpacing: 0.4
+                    }
                 }
-            }
 
-            Rectangle {
-                width: 1
-                height: 38
-                color: "#232834"
-            }
+                // Brand Pill ("VERIFY · DIRECT · CLARIFY")
+                Rectangle {
+                    height: 22
+                    width: brandPillText.implicitWidth + 20
+                    radius: 10
+                    color: "#24BAA164" // rgba(186, 161, 100, 0.14)
+                    border.color: "#7ABAA164" // rgba(186, 161, 100, 0.48)
+                    border.width: 1
 
-            // Multi-Sensor Mode: All active sensor cards side-by-side
-            RowLayout {
-                visible: bridge.activeSensorCount > 1
-                spacing: 16
-                Layout.fillWidth: true
+                    Text {
+                        id: brandPillText
+                        anchors.centerIn: parent
+                        text: "VERIFY · DIRECT · CLARIFY"
+                        color: root.avGoldBright
+                        font.pixelSize: 10
+                        font.bold: true
+                        font.letterSpacing: 1.3
+                    }
+                }
 
-                Repeater {
-                    model: bridge.activeSensors
-                    delegate: RowLayout {
-                        property var sData: modelData
-                        property bool isCurrent: bridge.activeDisplaySensor === sData.id
-                        spacing: 16
+                // Active Project Pill + New / Open Project Buttons (Retained AV Scan Feature)
+                Rectangle {
+                    property bool hasProj: bridge.projectName !== "" && bridge.projectName !== "No Active Project"
+                    height: 26
+                    width: projRow.implicitWidth + 16
+                    radius: 11
+                    color: "#12FFFFFF"
+                    border.color: hasProj ? "#7ABAA164" : "#3DFFFFFF"
+                    border.width: 1
 
-                        Rectangle {
-                            radius: 6
-                            color: isCurrent ? "#1e293b" : (cardMa.containsMouse ? "#141c28" : "transparent")
-                            border.color: isCurrent ? "#38bdf8" : (cardMa.containsMouse ? "#334155" : "transparent")
-                            border.width: isCurrent ? 2 : 1
-                            implicitWidth: cardCol.implicitWidth + 16
-                            implicitHeight: 46
+                    RowLayout {
+                        id: projRow
+                        anchors.centerIn: parent
+                        spacing: 6
 
-                            MouseArea {
-                                id: cardMa
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                hoverEnabled: true
-                                onPressed: {
-                                    bridge.setActiveDisplaySensor(sData.id)
-                                    canvas3d.requestPaint()
-                                    canvas2d.requestPaint()
-                                }
-                            }
-
-                            ColumnLayout {
-                                id: cardCol
-                                anchors.centerIn: parent
-                                spacing: 3
-                                RowLayout {
-                                    spacing: 6
-                                    Text {
-                                        text: (sData.icon ? (sData.icon + " ") : "") + sData.name.toUpperCase()
-                                        color: sData.sensorType === "LIDAR" ? "#38bdf8" : (sData.id === "GEMINI" ? "#c084fc" : (sData.id === "CAMERA" ? "#f59e0b" : "#2dd4bf"))
-                                        font.pixelSize: 11
-                                        font.bold: true
-                                        font.letterSpacing: 0.8
-                                    }
-                                    Rectangle {
-                                        width: 8
-                                        height: 8
-                                        radius: 4
-                                        color: {
-                                            var trk = getSensorTracking(sData.id, sData);
-                                            return (trk === "TRACKING_OK" || trk === "RUNNING") ? "#10b981" :
-                                                   (trk === "INITIALIZING") ? "#f59e0b" : "#64748b";
-                                        }
-                                    }
-                                    Text {
-                                        text: getSensorAcquisition(sData.id, sData) + " | " + getSensorTracking(sData.id, sData)
-                                        color: "#f1f5f9"
-                                        font.pixelSize: 11
-                                        font.bold: true
-                                    }
-                                }
-                                Text {
-                                    text: sData.isCapturable ? (getSensorAcqRate(sData.id).toFixed(1) + " Hz acq  ·  " +
-                                                                getSensorSlamRate(sData.id).toFixed(1) + " Hz SLAM  ·  " +
-                                                                getSensorPoints(sData.id, sData.pointCount) + " pts") :
-                                                               (sData.transport + "  ·  Backend: " + (sData.backendName || "None"))
-                                    color: "#cbd5e1"
-                                    font.pixelSize: 11
-                                    font.family: "Monospace"
-                                }
-                                Text {
-                                    visible: sData.scaleStatus && sData.scaleStatus !== "METRIC_VERIFIED"
-                                    text: "Scale: " + sData.scaleStatus
-                                    color: (sData.scaleStatus.indexOf("NO_RECONSTRUCTION") !== -1 || sData.scaleStatus.indexOf("NONE") !== -1) ? "#94a3b8" : "#f59e0b"
-                                    font.pixelSize: 10
-                                    font.bold: true
-                                }
-                                RowLayout {
-                                    visible: sData.id === "CAMERA"
-                                    spacing: 4
-                                    Text {
-                                        text: "Recon Backend:"
-                                        color: "#94a3b8"
-                                        font.pixelSize: 10
-                                    }
-                                    Rectangle {
-                                        implicitWidth: 65
-                                        implicitHeight: 18
-                                        radius: 3
-                                        color: bridge.selectedCameraBackend === "LingBotStreamingBackend" ? "#047857" : "#1e293b"
-                                        border.color: bridge.selectedCameraBackend === "LingBotStreamingBackend" ? "#10b981" : "#334155"
-                                        Text {
-                                            anchors.centerIn: parent
-                                            text: "LingBot"
-                                            color: bridge.selectedCameraBackend === "LingBotStreamingBackend" ? "#ffffff" : "#94a3b8"
-                                            font.pixelSize: 9
-                                            font.bold: true
-                                        }
-                                        MouseArea {
-                                            anchors.fill: parent
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: bridge.selectCameraBackend("LingBotStreamingBackend")
-                                        }
-                                    }
-                                    Rectangle {
-                                        implicitWidth: 80
-                                        implicitHeight: 18
-                                        radius: 3
-                                        color: bridge.selectedCameraBackend === "ABotStreamingBackend" ? "#b45309" : "#1e293b"
-                                        border.color: bridge.selectedCameraBackend === "ABotStreamingBackend" ? "#f59e0b" : "#334155"
-                                        Text {
-                                            anchors.centerIn: parent
-                                            text: "ABot (Exp)"
-                                            color: bridge.selectedCameraBackend === "ABotStreamingBackend" ? "#ffffff" : "#94a3b8"
-                                            font.pixelSize: 9
-                                            font.bold: true
-                                        }
-                                        MouseArea {
-                                            anchors.fill: parent
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: bridge.selectCameraBackend("ABotStreamingBackend")
-                                        }
-                                    }
-                                }
-                                Text {
-                                    visible: sData.id === "CAMERA" && bridge.selectedCameraBackend === "ABotStreamingBackend"
-                                    text: "⚠️ RESEARCH / EXPERIMENTAL (NON-COMMERCIAL)"
-                                    color: "#f59e0b"
-                                    font.pixelSize: 9
-                                    font.bold: true
-                                }
-                            }
+                        Text {
+                            text: (bridge.projectName !== "" && bridge.projectName !== "No Active Project")
+                                ? ("● PROJECT: " + bridge.projectName)
+                                : "○ NO PROJECT"
+                            color: (bridge.projectName !== "" && bridge.projectName !== "No Active Project")
+                                ? root.avGoldBright
+                                : root.avWhiteMuted
+                            font.pixelSize: 10
+                            font.bold: true
                         }
 
                         Rectangle {
                             width: 1
-                            height: 38
-                            color: "#232834"
+                            height: 12
+                            color: "#3DFFFFFF"
                         }
-                    }
-                }
 
-                // Extrinsics Status Pill Badge
-                Rectangle {
-                    implicitHeight: 28
-                    implicitWidth: extrinsicsPillText.contentWidth + 16
-                    radius: 4
-                    color: "#0f172a"
-                    border.color: "#334155"
-                    RowLayout {
-                        anchors.centerIn: parent
-                        spacing: 4
-                        Text {
-                            id: extrinsicsPillText
-                            text: "📐 Extrinsics: UNKNOWN (Independent SLAM)"
-                            color: "#f59e0b"
-                            font.pixelSize: 10
-                            font.bold: true
+                        Button {
+                            id: headerNewProjBtn
+                            text: "+ New"
+                            implicitHeight: 20
+                            implicitWidth: 46
+                            onClicked: newProjectDialog.open()
+                            contentItem: Text {
+                                text: headerNewProjBtn.text
+                                color: root.avWhiteWarm
+                                font.pixelSize: 10
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            background: Rectangle {
+                                radius: 6
+                                color: headerNewProjBtn.hovered ? "#38BAA164" : "#1FBAA164"
+                                border.color: "#85BAA164"
+                                border.width: 1
+                            }
+                        }
+
+                        Button {
+                            id: headerOpenProjBtn
+                            text: "Open"
+                            implicitHeight: 20
+                            implicitWidth: 44
+                            onClicked: openProjectDialog.open()
+                            contentItem: Text {
+                                text: headerOpenProjBtn.text
+                                color: root.avGoldBright
+                                font.pixelSize: 10
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            background: Rectangle {
+                                radius: 6
+                                color: headerOpenProjBtn.hovered ? "#29FFFFFF" : "#12FFFFFF"
+                                border.color: "#3DFFFFFF"
+                                border.width: 1
+                            }
                         }
                     }
                 }
 
                 Item { Layout.fillWidth: true }
 
-                // System Platform Metrics (CPU / GPU / RAM)
-                ColumnLayout {
-                    spacing: 3
+                // Live AR Glass Opacity Slider (Matches scanarMini: "Glass 12%", 0%..90%)
+                Rectangle {
+                    height: 24
+                    width: glassSliderRow.implicitWidth + 14
+                    radius: 11
+                    color: "#12FFFFFF"
+                    border.color: "#47BAA164"
+                    border.width: 1
+
+                    RowLayout {
+                        id: glassSliderRow
+                        anchors.centerIn: parent
+                        spacing: 6
+
+                        Text {
+                            text: "Glass " + root.glassOpacityPct + "%"
+                            color: root.avGoldBright
+                            font.pixelSize: 10
+                            font.bold: true
+                        }
+
+                        Slider {
+                            id: glassOpacitySlider
+                            from: 0
+                            to: 90
+                            stepSize: 1
+                            value: root.glassOpacityPct
+                            implicitWidth: 64
+                            implicitHeight: 16
+                            onMoved: root.glassOpacityPct = Math.round(value)
+                            background: Rectangle {
+                                x: glassOpacitySlider.leftPadding
+                                y: glassOpacitySlider.topPadding + glassOpacitySlider.availableHeight / 2 - height / 2
+                                implicitWidth: 64
+                                implicitHeight: 4
+                                width: glassOpacitySlider.availableWidth
+                                height: implicitHeight
+                                radius: 2
+                                color: "#29FFFFFF"
+
+                                Rectangle {
+                                    width: glassOpacitySlider.visualPosition * parent.width
+                                    height: parent.height
+                                    color: root.avGoldPrimary
+                                    radius: 2
+                                }
+                            }
+                            handle: Rectangle {
+                                x: glassOpacitySlider.leftPadding + glassOpacitySlider.visualPosition * (glassOpacitySlider.availableWidth - width)
+                                y: glassOpacitySlider.topPadding + glassOpacitySlider.availableHeight / 2 - height / 2
+                                implicitWidth: 11
+                                implicitHeight: 11
+                                radius: 6
+                                color: root.avGoldBright
+                                border.color: root.avWhiteWarm
+                                border.width: 1
+                            }
+                        }
+                    }
+                }
+
+                // Status Pill 1: PACE READY / CAPTURING
+                Rectangle {
+                    height: 24
+                    width: paceStatusText.implicitWidth + 16
+                    radius: 11
+                    color: "#1F22C55E"
+                    border.color: "#7022C55E"
+                    border.width: 1
+
                     Text {
-                        text: "⚡ JETSON ORIN TELEMETRY"
-                        color: "#22c55e"
+                        id: paceStatusText
+                        anchors.centerIn: parent
+                        text: bridge.isCapturing ? ("● PACE: " + bridge.airySlamRate.toFixed(0) + " Hz") : "● PACE: READY"
+                        color: root.avStatusOk
                         font.pixelSize: 10
                         font.bold: true
-                        font.letterSpacing: 0.8
                     }
+                }
+
+                // Status Pill 2: C-SLAM Peer Count (clickable to open Multi-Node Mesh Manager)
+                Rectangle {
+                    height: 24
+                    width: cslamPillText.implicitWidth + 16
+                    radius: 11
+                    color: "#24BAA164"
+                    border.color: "#7ABAA164"
+                    border.width: 1
+
                     Text {
-                        text: "CPU: " + bridge.hostCpuUtil.toFixed(1) + "%  |  GPU: " + bridge.hostGpuUtil.toFixed(1) + "%  |  RAM: " + bridge.hostMemory
-                        color: "#f1f5f9"
-                        font.pixelSize: 11
+                        id: cslamPillText
+                        anchors.centerIn: parent
+                        text: "● C-SLAM: " + Math.max(1, bridge.cslamScannerCount) + (Math.max(1, bridge.cslamScannerCount) === 1 ? " Scanner" : " Scanners")
+                        color: root.avGoldBright
+                        font.pixelSize: 10
                         font.bold: true
-                        font.family: "Monospace"
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: multiNodeDialog.open()
+                    }
+                }
+
+                // Status Pill 3: LiDAR Status
+                Rectangle {
+                    property bool lidarOnline: bridge.airyDeviceStatus === "CONNECTED" || bridge.airyDeviceStatus === "STREAMING"
+                    height: 24
+                    width: lidarPillText.implicitWidth + 16
+                    radius: 11
+                    color: lidarOnline ? "#1F22C55E" : "#12FFFFFF"
+                    border.color: lidarOnline ? "#7022C55E" : "#3DFFFFFF"
+                    border.width: 1
+
+                    Text {
+                        id: lidarPillText
+                        anchors.centerIn: parent
+                        text: parent.lidarOnline ? ("● LiDAR: " + bridge.airyAcquisitionRate.toFixed(0) + "Hz") : "● LiDAR: Ready"
+                        color: parent.lidarOnline ? root.avStatusOk : root.avWhiteWarm
+                        font.pixelSize: 10
+                        font.bold: true
+                    }
+                }
+
+                // Status Pill 4: Camera Status
+                Rectangle {
+                    property bool camOnline: bridge.geminiDeviceStatus === "CONNECTED" || bridge.cameraDeviceStatus === "CONNECTED" || bridge.vitureDeviceStatus === "CONNECTED"
+                    height: 24
+                    width: camPillText.implicitWidth + 16
+                    radius: 11
+                    color: camOnline ? "#1F22C55E" : "#12FFFFFF"
+                    border.color: camOnline ? "#7022C55E" : "#3DFFFFFF"
+                    border.width: 1
+
+                    Text {
+                        id: camPillText
+                        anchors.centerIn: parent
+                        text: parent.camOnline ? "● Camera: STREAMING" : "● Camera: Ready"
+                        color: parent.camOnline ? root.avStatusOk : root.avWhiteWarm
+                        font.pixelSize: 10
+                        font.bold: true
+                    }
+                }
+
+                // Status Pill 5: SLAM Tracking Status
+                Rectangle {
+                    height: 24
+                    width: slamPillText.implicitWidth + 16
+                    radius: 11
+                    color: bridge.trackingStatus === "TRACKING" ? "#1F22C55E" : "#1CBAA164"
+                    border.color: bridge.trackingStatus === "TRACKING" ? "#7022C55E" : "#6BBAA164"
+                    border.width: 1
+
+                    Text {
+                        id: slamPillText
+                        anchors.centerIn: parent
+                        text: "● SLAM: " + (bridge.trackingStatus || "IDLE")
+                        color: bridge.trackingStatus === "TRACKING" ? root.avStatusOk : root.avGoldBright
+                        font.pixelSize: 10
+                        font.bold: true
+                    }
+                }
+
+                // Frameless Transparent Apple Glass Window Controls (Minimize, Maximize/Restore, Close)
+                RowLayout {
+                    spacing: 5
+
+                    Button {
+                        id: winMinBtn
+                        implicitWidth: 26
+                        implicitHeight: 26
+                        onClicked: root.showMinimized()
+                        contentItem: Text {
+                            text: "—"
+                            color: root.avWhiteWarm
+                            font.pixelSize: 11
+                            font.bold: true
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: Rectangle {
+                            radius: 13
+                            color: winMinBtn.hovered ? "#2EFFFFFF" : "#12FFFFFF"
+                            border.color: winMinBtn.hovered ? root.avGoldPrimary : "#38FFFFFF"
+                            border.width: 1
+                        }
+                    }
+
+                    Button {
+                        id: winMaxBtn
+                        implicitWidth: 26
+                        implicitHeight: 26
+                        onClicked: {
+                            if (root.visibility === Window.Maximized) root.showNormal();
+                            else root.showMaximized();
+                        }
+                        contentItem: Text {
+                            text: "□"
+                            color: root.avWhiteWarm
+                            font.pixelSize: 11
+                            font.bold: true
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: Rectangle {
+                            radius: 13
+                            color: winMaxBtn.hovered ? "#2EFFFFFF" : "#12FFFFFF"
+                            border.color: winMaxBtn.hovered ? root.avGoldPrimary : "#38FFFFFF"
+                            border.width: 1
+                        }
+                    }
+
+                    Button {
+                        id: winCloseBtn
+                        implicitWidth: 26
+                        implicitHeight: 26
+                        onClicked: Qt.quit()
+                        contentItem: Text {
+                            text: "✕"
+                            color: root.avWhiteWarm
+                            font.pixelSize: 11
+                            font.bold: true
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: Rectangle {
+                            radius: 13
+                            color: winCloseBtn.hovered ? "#70EF4444" : "#12FFFFFF"
+                            border.color: winCloseBtn.hovered ? "#F87171" : "#38FFFFFF"
+                            border.width: 1
+                        }
                     }
                 }
             }
+        }
 
-            // Single Sensor Mode: Single sensor status + tracking state + Jetson
+        // ---------------------------------------------------------------------
+        // ROW 2: ACTION & SESSION CONTROL BAR (id: ctrlBar, height: 48)
+        // Matches scanarMini ctrl_bar + retains all AV Scan workflow buttons
+        // ---------------------------------------------------------------------
+        Rectangle {
+            id: ctrlBar
+            Layout.fillWidth: true
+            Layout.preferredHeight: 48
+            radius: 11
+            color: Qt.rgba(1, 1, 1, 0.03 + (root.glassOpacityPct / 100.0) * 0.06)
+            border.color: "#24FFFFFF" // rgba(255, 255, 255, 0.14)
+            border.width: 1
+
             RowLayout {
-                visible: bridge.activeSensorCount <= 1
-                spacing: 16
-                Layout.fillWidth: true
+                anchors.fill: parent
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                spacing: 8
 
-                ColumnLayout {
-                    spacing: 3
-                    Text {
-                        text: "SENSOR STATUS"
-                        color: "#64748b"
-                        font.pixelSize: 10
+                // 1. Primary Action: ▶ START SCAN (matches scanarMini start_btn)
+                Button {
+                    id: startBtn
+                    text: bridge.isCapturing ? "● SCANNING..." : "▶  START SCAN"
+                    enabled: !bridge.isCapturing
+                    implicitHeight: 34
+                    implicitWidth: 136
+                    onClicked: bridge.startCapture()
+                    contentItem: Text {
+                        text: startBtn.text
+                        color: startBtn.enabled ? root.avWhiteWarm : "#59FFFFFF"
+                        font.pixelSize: 12
                         font.bold: true
-                        font.letterSpacing: 0.8
+                        font.letterSpacing: 0.5
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
                     }
-                    RowLayout {
-                        spacing: 6
-                        Rectangle {
-                            width: 8
-                            height: 8
-                            radius: 4
-                            color: bridge.isCapturing ? "#10b981" : 
-                                   bridge.sensorStatus === "READY" ? "#3b82f6" : "#64748b"
-                        }
-                        Text {
-                            text: bridge.sensorStatus
-                            color: "#f1f5f9"
-                            font.pixelSize: 11
-                            font.bold: true
-                        }
-                        Text {
-                            text: "· " + bridge.selectedScannerDetails
-                            color: "#94a3b8"
-                            font.pixelSize: 10
-                        }
+                    background: Rectangle {
+                        radius: 9
+                        color: !startBtn.enabled ? "#0DFFFFFF" : (startBtn.hovered ? "#75BAA164" : "#52BAA164")
+                        border.color: startBtn.enabled ? root.avGoldPrimary : "#24FFFFFF"
+                        border.width: 1
+                    }
+                }
+
+                // 2. Primary Action: ■ STOP (matches scanarMini stop_btn)
+                Button {
+                    id: stopBtn
+                    text: "■  STOP"
+                    enabled: bridge.isCapturing
+                    implicitHeight: 34
+                    implicitWidth: 92
+                    onClicked: bridge.stopCapture()
+                    contentItem: Text {
+                        text: stopBtn.text
+                        color: stopBtn.enabled ? "#FCA5A5" : "#4DFFFFFF"
+                        font.pixelSize: 12
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle {
+                        radius: 9
+                        color: !stopBtn.enabled ? "#0AFFFFFF" : (stopBtn.hovered ? "#4DEF4444" : "#29EF4444")
+                        border.color: stopBtn.enabled ? "#8CF87171" : "#1FFFFFFF"
+                        border.width: 1
+                    }
+                }
+
+                // 3. Primary Action: ↓ SAVE DATASET (matches scanarMini save_btn)
+                Button {
+                    id: saveBtn
+                    text: "↓  SAVE DATASET"
+                    implicitHeight: 34
+                    implicitWidth: 132
+                    onClicked: {
+                        bridge.openCleanupWizard();
+                        cleanupExportDialog.open();
+                    }
+                    contentItem: Text {
+                        text: saveBtn.text
+                        color: root.avGoldBright
+                        font.pixelSize: 12
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle {
+                        radius: 9
+                        color: saveBtn.hovered ? "#2EBAA164" : "#1FFFFFFF"
+                        border.color: saveBtn.hovered ? root.avGoldPrimary : "#59FCFBF8"
+                        border.width: 1
+                    }
+                }
+
+                // 4. Real-Time M12 Toggle Pill (matches scanarMini rt_m12_btn)
+                Button {
+                    id: liveCleanupHeaderBtn
+                    text: bridge.liveCleanupEnabled ? "✦ M12 RT: ON" : "✦ M12 RT: OFF"
+                    implicitHeight: 34
+                    implicitWidth: 112
+                    onClicked: bridge.liveCleanupEnabled = !bridge.liveCleanupEnabled
+                    contentItem: Text {
+                        text: liveCleanupHeaderBtn.text
+                        color: bridge.liveCleanupEnabled ? root.avGoldBright : root.avWhiteMuted
+                        font.pixelSize: 11
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle {
+                        radius: 9
+                        color: bridge.liveCleanupEnabled ? "#2EBAA164" : "#14FFFFFF"
+                        border.color: bridge.liveCleanupEnabled ? root.avGoldPrimary : "#38FFFFFF"
+                        border.width: 1
+                    }
+                }
+
+                // 5. Elapsed Timer Pill (matches scanarMini timer_lbl)
+                Rectangle {
+                    height: 34
+                    width: 86
+                    radius: 9
+                    color: "#0FFFFFFF"
+                    border.color: "#38FFFFFF"
+                    border.width: 1
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "⏱ " + (bridge.elapsedTimeString || "00:00")
+                        color: root.avWhiteWarm
+                        font.pixelSize: 12
+                        font.family: "Monospace"
+                        font.bold: true
                     }
                 }
 
                 Rectangle {
                     width: 1
-                    height: 38
-                    color: "#232834"
+                    height: 24
+                    color: "#2EFFFFFF"
                 }
 
-                ColumnLayout {
-                    spacing: 3
-                    Text {
-                        text: "TRACKING STATE"
-                        color: "#64748b"
-                        font.pixelSize: 10
-                        font.bold: true
-                        font.letterSpacing: 0.8
+                // 6. Active Scanner Profile Selector (Retained AV Scan Hardware Control)
+                ComboBox {
+                    id: scannerCombo
+                    model: bridge.availableScanners
+                    implicitWidth: 185
+                    implicitHeight: 32
+                    enabled: !bridge.isCapturing
+                    onActivated: {
+                        if (currentText !== "") {
+                            bridge.selectScanner(currentText);
+                        }
                     }
-                    RowLayout {
-                        spacing: 6
-                        Rectangle {
-                            width: 8
-                            height: 8
-                            radius: 4
-                            color: bridge.trackingStatus === "TRACKING_OK" ? "#10b981" : 
-                                   bridge.trackingStatus === "READY" ? "#3b82f6" : "#64748b"
-                        }
-                        Text {
-                            text: bridge.trackingStatus
-                            color: "#f1f5f9"
-                            font.pixelSize: 11
-                            font.bold: true
-                        }
+                    contentItem: Text {
+                        text: scannerCombo.displayText !== "" ? ("Scanner: " + scannerCombo.displayText) : "Select Scanner..."
+                        color: root.avWhiteWarm
+                        font.pixelSize: 11
+                        font.bold: true
+                        verticalAlignment: Text.AlignVCenter
+                        leftPadding: 10
+                        elide: Text.ElideRight
+                    }
+                    background: Rectangle {
+                        radius: 8
+                        color: "#14FFFFFF"
+                        border.color: "#6BBAA164"
+                        border.width: 1
                     }
                 }
 
                 Item { Layout.fillWidth: true }
 
-                ColumnLayout {
-                    spacing: 3
-                    Text {
-                        text: "⚡ JETSON ORIN TELEMETRY"
-                        color: "#22c55e"
-                        font.pixelSize: 10
-                        font.bold: true
-                        font.letterSpacing: 0.8
+                // 7. Retained AV Scan Hardware & Studio Workflow Buttons (Apple Glass Pill Styling)
+                Button {
+                    id: mainCreateProfileBtn
+                    text: "⚡ Profile"
+                    implicitHeight: 32
+                    implicitWidth: 78
+                    onClicked: {
+                        bridge.initCreateProfileForm();
+                        createProfileDialog.open();
                     }
-                    Text {
-                        text: "CPU: " + bridge.hostCpuUtil.toFixed(1) + "%  |  GPU: " + bridge.hostGpuUtil.toFixed(1) + "%  |  RAM: " + bridge.hostMemory
-                        color: "#f1f5f9"
+                    contentItem: Text {
+                        text: mainCreateProfileBtn.text
+                        color: root.avGoldBright
                         font.pixelSize: 11
                         font.bold: true
-                        font.family: "Monospace"
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle {
+                        radius: 8
+                        color: mainCreateProfileBtn.hovered ? "#2EBAA164" : "#19BAA164"
+                        border.color: "#7ABAA164"
+                        border.width: 1
                     }
                 }
-            }
-        }
-    }
-
-    // ==========================================
-    // 4. BOTTOM CONFIGURATION & CONTROL BAR (START / STOP / SAVE)
-    // ==========================================
-    Rectangle {
-        id: bottomBar
-        height: 64
-        color: "#161920"
-        anchors {
-            bottom: parent.bottom
-            left: parent.left
-            right: parent.right
-        }
-
-        Rectangle {
-            anchors.top: parent.top
-            anchors.left: parent.left
-            anchors.right: parent.right
-            height: 1
-            color: "#232834"
-        }
-
-        // Right-Pinned Primary Action Controls & Capture Duration (Always 100% visible, cannot be pushed off)
-        RowLayout {
-            id: bottomBarActions
-            anchors.right: parent.right
-            anchors.rightMargin: 16
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: 12
-
-            // Elapsed Capture Timer
-            ColumnLayout {
-                spacing: 2
-                Text {
-                    text: "CAPTURE TIME"
-                    color: "#64748b"
-                    font.pixelSize: 9
-                    font.bold: true
-                    font.letterSpacing: 1.0
-                }
-                Text {
-                    text: bridge.elapsedTimeString
-                    color: bridge.isCapturing ? "#38bdf8" : "#94a3b8"
-                    font.pixelSize: 22
-                    font.bold: true
-                    font.family: "Monospace"
-                }
-            }
-
-            Rectangle {
-                width: 1
-                height: 40
-                color: "#28303e"
-            }
-
-            // Primary Action Buttons: START, STOP, SAVE
-            RowLayout {
-                spacing: 8
 
                 Button {
-                    id: startBtn
-                    text: "START"
-                    enabled: !bridge.isCapturing && (bridge.canStart || (bridge.activeSensors.length > 0 && bridge.activeSensors[0].isCapturable))
-                    implicitWidth: 105
-                    implicitHeight: 44
-                    ToolTip.visible: hovered && !enabled
-                    ToolTip.delay: 300
-                    ToolTip.text: bridge.isCapturing ? "Capture is actively recording" :
-                                  (bridge.activeSensors.length === 0 ? "No active sensor selected" :
-                                  "Selected sensor not available for spatial capture")
+                    id: mainConfigSensorsBtn
+                    text: "⚙ Sensors"
+                    implicitHeight: 32
+                    implicitWidth: 82
+                    onClicked: configureSensorsDialog.open()
+                    contentItem: Text {
+                        text: mainConfigSensorsBtn.text
+                        color: root.avWhiteWarm
+                        font.pixelSize: 11
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle {
+                        radius: 8
+                        color: mainConfigSensorsBtn.hovered ? "#29FFFFFF" : "#12FFFFFF"
+                        border.color: "#3DFFFFFF"
+                        border.width: 1
+                    }
+                }
+
+                Button {
+                    id: mainCatalogBtn
+                    text: "📚 Catalog"
+                    implicitHeight: 32
+                    implicitWidth: 82
                     onClicked: {
-                        if (bridge.projectId === "") {
-                            var dateStr = Qt.formatDateTime(new Date(), "yyyyMMdd_hhmmss");
-                            bridge.createProject("Scan_" + dateStr, "Autonomous capture session");
-                        }
-                        bridge.startCapture();
-                        canvas3d.requestPaint();
-                        canvas2d.requestPaint();
+                        configureSensorsDialog.currentTab = 2;
+                        configureSensorsDialog.open();
                     }
                     contentItem: Text {
-                        text: parent.text
-                        color: startBtn.enabled ? "white" : "#64748b"
+                        text: mainCatalogBtn.text
+                        color: root.avGoldBright
+                        font.pixelSize: 11
                         font.bold: true
-                        font.pixelSize: 14
-                        font.letterSpacing: 1.0
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                     }
                     background: Rectangle {
-                        color: startBtn.enabled ? (startBtn.hovered ? "#15803d" : "#16a34a") : "#1c2331"
-                        radius: 6
-                        border.color: startBtn.enabled ? "#22c55e" : "#2d3748"
+                        radius: 8
+                        color: mainCatalogBtn.hovered ? "#2EBAA164" : "#19BAA164"
+                        border.color: "#7ABAA164"
+                        border.width: 1
                     }
                 }
 
                 Button {
-                    id: stopBtn
-                    text: "STOP"
-                    enabled: bridge.canStop
-                    implicitWidth: 105
-                    implicitHeight: 44
+                    id: orientationDiagBtn
+                    text: "📐 Orient"
+                    implicitHeight: 32
+                    implicitWidth: 76
                     onClicked: {
-                        bridge.stopCapture();
-                        canvas3d.requestPaint();
-                        canvas2d.requestPaint();
+                        bridge.openOrientationDiagnostic();
+                        orientationDiagDialog.open();
                     }
                     contentItem: Text {
-                        text: parent.text
-                        color: stopBtn.enabled ? "white" : "#64748b"
+                        text: orientationDiagBtn.text
+                        color: root.avWhiteWarm
+                        font.pixelSize: 11
                         font.bold: true
-                        font.pixelSize: 14
-                        font.letterSpacing: 1.0
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                     }
                     background: Rectangle {
-                        color: stopBtn.enabled ? (stopBtn.hovered ? "#b91c1c" : "#dc2626") : "#1c2331"
-                        radius: 6
-                        border.color: stopBtn.enabled ? "#ef4444" : "#2d3748"
+                        radius: 8
+                        color: orientationDiagBtn.hovered ? "#29FFFFFF" : "#12FFFFFF"
+                        border.color: "#3DFFFFFF"
+                        border.width: 1
                     }
                 }
 
                 Button {
-                    id: saveBtn
-                    text: "SAVE"
-                    enabled: bridge.canSave
-                    implicitWidth: 105
-                    implicitHeight: 44
-                    onClicked: bridge.saveCapture()
+                    id: headerMultiNodeBtn
+                    text: "🌐 Mesh (" + Math.max(1, bridge.cslamScannerCount) + ")"
+                    implicitHeight: 32
+                    implicitWidth: 92
+                    onClicked: multiNodeDialog.open()
                     contentItem: Text {
-                        text: parent.text
-                        color: saveBtn.enabled ? "white" : "#64748b"
+                        text: headerMultiNodeBtn.text
+                        color: root.avGoldBright
+                        font.pixelSize: 11
                         font.bold: true
-                        font.pixelSize: 14
-                        font.letterSpacing: 1.0
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                     }
                     background: Rectangle {
-                        color: saveBtn.enabled ? (saveBtn.hovered ? "#1d4ed8" : "#2563eb") : "#1c2331"
-                        radius: 6
-                        border.color: saveBtn.enabled ? "#3b82f6" : "#2d3748"
+                        radius: 8
+                        color: headerMultiNodeBtn.hovered ? "#2EBAA164" : "#19BAA164"
+                        border.color: "#7ABAA164"
+                        border.width: 1
+                    }
+                }
+
+                Button {
+                    id: headerOfflineRegBtn
+                    text: "🔀 Register"
+                    implicitHeight: 32
+                    implicitWidth: 84
+                    onClicked: {
+                        bridge.refreshRegistrationProjectScans();
+                        offlineRegistrationDialog.open();
+                    }
+                    contentItem: Text {
+                        text: headerOfflineRegBtn.text
+                        color: root.avWhiteWarm
+                        font.pixelSize: 11
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle {
+                        radius: 8
+                        color: headerOfflineRegBtn.hovered ? "#29FFFFFF" : "#12FFFFFF"
+                        border.color: "#3DFFFFFF"
+                        border.width: 1
+                    }
+                }
+
+                Button {
+                    id: headerFusionBtn
+                    text: "🔗 Fusion"
+                    implicitHeight: 32
+                    implicitWidth: 76
+                    onClicked: {
+                        bridge.openCalibrationWizard();
+                        calibrationFusionDialog.open();
+                    }
+                    contentItem: Text {
+                        text: headerFusionBtn.text
+                        color: root.avWhiteWarm
+                        font.pixelSize: 11
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle {
+                        radius: 8
+                        color: headerFusionBtn.hovered ? "#29FFFFFF" : "#12FFFFFF"
+                        border.color: "#3DFFFFFF"
+                        border.width: 1
+                    }
+                }
+
+                Button {
+                    id: headerCleanupExportBtn
+                    text: "✦ Cleanup"
+                    implicitHeight: 32
+                    implicitWidth: 82
+                    onClicked: {
+                        bridge.openCleanupWizard();
+                        cleanupExportDialog.open();
+                    }
+                    contentItem: Text {
+                        text: headerCleanupExportBtn.text
+                        color: root.avGoldBright
+                        font.pixelSize: 11
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle {
+                        radius: 8
+                        color: headerCleanupExportBtn.hovered ? "#2EBAA164" : "#19BAA164"
+                        border.color: "#7ABAA164"
+                        border.width: 1
                     }
                 }
             }
         }
 
-        // Left / Center Configuration & Scanner Selection
+        // ---------------------------------------------------------------------
+        // ROW 3: 60% / 40% HORIZONTAL SPLIT WORKSPACE (Matches scanarMini)
+        //   Left (60%): Pure AR Walking Passthrough Viewport (NO GRID!)
+        //   Right (40%): Peripheral Apple Glass HUD Stack
+        // ---------------------------------------------------------------------
         RowLayout {
-            anchors.left: parent.left
-            anchors.leftMargin: 16
-            anchors.right: bottomBarActions.left
-            anchors.rightMargin: 16
-            anchors.verticalCenter: parent.verticalCenter
+            id: mainWorkspaceSplit
+            Layout.fillWidth: true
+            Layout.fillHeight: true
             spacing: 10
 
-            Text {
-                text: "CONFIGURATION:"
-                color: "#94a3b8"
-                font.pixelSize: 11
-                font.bold: true
-                font.letterSpacing: 0.8
-            }
+            // =================================================================
+            // LEFT PANEL (~60%): CLEAR AR WALKING PASSTHROUGH VIEWPORT (NO GRID)
+            // Directly mimics scanarMini ClearPassthroughViewport + Stage 1 bar
+            // =================================================================
+            ColumnLayout {
+                id: leftPassthroughColumn
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.preferredWidth: 600
+                spacing: 4
 
-            ComboBox {
-                id: scannerCombo
-                model: bridge.availableScanners
-                currentIndex: bridge.selectedScannerIndex
-                onActivated: bridge.selectScannerByIndex(currentIndex)
-                background: Rectangle {
-                    implicitWidth: 260
-                    implicitHeight: 38
-                    color: "#1c222c"
-                    border.color: "#334155"
-                    radius: 6
-                }
-                contentItem: Text {
-                    leftPadding: 12
-                    rightPadding: 24
-                    text: scannerCombo.displayText
-                    color: "#f8fafc"
-                    elide: Text.ElideRight
-                    verticalAlignment: Text.AlignVCenter
-                    font.pixelSize: 12
-                    font.bold: true
-                }
-            }
+                // Compact Single-Line Stage Prompt + Thin Gold Progress Bar Row (26px)
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 26
+                    spacing: 8
 
-            Button {
-                id: mainCreateProfileBtn
-                text: "⚡ Create Profile"
-                implicitHeight: 38
-                implicitWidth: 140
-                onClicked: {
-                    configureSensorsDialog.currentTab = 1;
-                    configureSensorsDialog.open();
-                    configureSensorsDialog.refreshDiscovery();
-                }
-                contentItem: Text {
-                    text: parent.text
-                    color: "white"
-                    font.pixelSize: 12
-                    font.bold: true
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-                background: Rectangle {
-                    color: parent.hovered ? "#0284c7" : "#0369a1"
-                    radius: 6
-                    border.color: "#38bdf8"
-                    border.width: 1.5
-                }
-            }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 24
+                        radius: 7
+                        color: "#1FBAA164" // rgba(186, 161, 100, 0.12)
+                        border.color: "#6BBAA164" // rgba(186, 161, 100, 0.42)
+                        border.width: 1
 
-            Button {
-                text: "⚙️ Configure Sensors"
-                implicitHeight: 38
-                implicitWidth: 150
-                onClicked: {
-                    configureSensorsDialog.currentTab = 1;
-                    configureSensorsDialog.open();
-                }
-                contentItem: Text {
-                    text: parent.text
-                    color: "#38bdf8"
-                    font.pixelSize: 12
-                    font.bold: true
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-                background: Rectangle {
-                    color: parent.hovered ? "#1e293b" : "#0f172a"
-                    radius: 6
-                    border.color: "#38bdf8"
-                }
-            }
-
-            Button {
-                id: mainCatalogBtn
-                text: "📚 Sensor Catalog"
-                implicitHeight: 38
-                implicitWidth: 145
-                onClicked: {
-                    configureSensorsDialog.currentTab = 2;
-                    configureSensorsDialog.open();
-                    configureSensorsDialog.refreshCatalog();
-                }
-                contentItem: Text {
-                    text: parent.text
-                    color: "#38bdf8"
-                    font.pixelSize: 12
-                    font.bold: true
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-                background: Rectangle {
-                    color: parent.hovered ? "#1e293b" : "#0f172a"
-                    radius: 6
-                    border.color: "#38bdf8"
-                }
-            }
-
-            Button {
-                id: orientationDiagBtn
-                text: "📐 Orientation Diagnostic"
-                implicitHeight: 38
-                implicitWidth: 175
-                onClicked: {
-                    bridge.openOrientationDiagnostic();
-                    orientationDiagDialog.open();
-                }
-                contentItem: Text {
-                    text: parent.text
-                    color: "#c084fc"
-                    font.pixelSize: 12
-                    font.bold: true
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-                background: Rectangle {
-                    color: orientationDiagBtn.hovered ? "#3b0764" : "#1e1b4b"
-                    radius: 6
-                    border.color: "#a855f7"
-                }
-            }
-
-            // Neural Reconstruction Backend Selector (Milestone 14.6)
-            RowLayout {
-                visible: bridge.selectedScannerName.indexOf("Camera") !== -1 || bridge.selectedScannerName.indexOf("48MP") !== -1
-                spacing: 6
-                Text {
-                    text: "Recon Engine:"
-                    color: "#94a3b8"
-                    font.pixelSize: 11
-                    font.bold: true
-                }
-                ComboBox {
-                    id: cameraBackendCombo
-                    implicitHeight: 38
-                    implicitWidth: 200
-                    model: [
-                        "LingBot-Map (Commercial)",
-                        "ABot-Recon (Experimental)"
-                    ]
-                    currentIndex: bridge.selectedCameraBackend === "ABotStreamingBackend" ? 1 : 0
-                    onActivated: (index) => {
-                        if (index === 1) {
-                            bridge.selectCameraBackend("ABotStreamingBackend");
-                        } else {
-                            bridge.selectCameraBackend("LingBotStreamingBackend");
+                        Text {
+                            anchors.left: parent.left
+                            anchors.leftMargin: 10
+                            anchors.right: parent.right
+                            anchors.rightMargin: 10
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: bridge.isCapturing
+                                ? ("STAGE 2  ·  ACTIVE SPATIAL CAPTURE — Walking AR Passthrough Active  ·  Anchor: " + (bridge.activeAnchorSensor || "AIRY"))
+                                : "STAGE 1  ·  Place scanner static on flat surface, then press 'START SCAN'"
+                            color: root.avGoldBright
+                            font.pixelSize: 12
+                            font.weight: Font.DemiBold
+                            elide: Text.ElideRight
                         }
                     }
-                    contentItem: Text {
-                        text: cameraBackendCombo.displayText
-                        color: cameraBackendCombo.currentIndex === 1 ? "#f59e0b" : "#10b981"
-                        font.pixelSize: 11
-                        font.bold: true
-                        verticalAlignment: Text.AlignVCenter
-                        leftPadding: 8
+
+                    // Thin 5px Champagne Gold Progress Bar (matches scanarMini init_progress)
+                    Rectangle {
+                        Layout.preferredWidth: 150
+                        Layout.preferredHeight: 5
+                        radius: 2.5
+                        color: "#1FFFFFFF"
+
+                        Rectangle {
+                            width: parent.width * (bridge.isCapturing ? 1.0 : ((bridge.projectName !== "" && bridge.projectName !== "No Active Project") ? 0.35 : 0.08))
+                            height: parent.height
+                            radius: 2.5
+                            color: root.avGoldPrimary
+                        }
                     }
-                    background: Rectangle {
-                        color: "#0f172a"
-                        radius: 6
-                        border.color: cameraBackendCombo.currentIndex === 1 ? "#f59e0b" : "#10b981"
+                }
+
+                // Pure Clear AR Passthrough Viewport (id: panel3d / ClearPassthroughViewport)
+                // 100% transparent / #000000 with ZERO grid lines and ZERO coordinate axes!
+                Rectangle {
+                    id: panel3d
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    radius: 12
+                    // Pure transparent in window mode; #000000 optical see-through in AR glasses
+                    color: "transparent"
+                    border.color: "#6BBAA164" // Subtle 1px champagne gold boundary rim (rgba(186, 161, 100, 108))
+                    border.width: 1
+                    clip: true
+
+                    property real camYaw: -0.65
+                    property real camPitch: 0.42
+                    property real camDistance: 12.0
+                    property real panX: 0.0
+                    property real panY: 0.0
+
+                    function resetCamera() {
+                        camYaw = -0.65;
+                        camPitch = 0.42;
+                        camDistance = 12.0;
+                        panX = 0.0;
+                        panY = 0.0;
+                        canvas3d.requestPaint();
+                    }
+
+                    // Kept for full compatibility with dialogs/signals that invoke canvas3d.requestPaint()
+                    // Does NOT draw any grid or axes — pure unobstructed passthrough!
+                    Canvas {
+                        id: canvas3d
+                        anchors.fill: parent
+
+                        function project(x, y, z, w, h) {
+                            var cy = Math.cos(panel3d.camYaw), sy = Math.sin(panel3d.camYaw);
+                            var cp = Math.cos(panel3d.camPitch), sp = Math.sin(panel3d.camPitch);
+                            var rx = x * cy - y * sy;
+                            var ry = x * sy + y * cy;
+                            var rz = z;
+                            var py = ry * cp - rz * sp;
+                            var pz = ry * sp + rz * cp;
+                            var fov = 480.0 * (12.0 / Math.max(1.5, panel3d.camDistance));
+                            var scale = fov / Math.max(2.0, 18.0 + py);
+                            return {
+                                x: (w * 0.5) + panel3d.panX + rx * scale,
+                                y: (h * 0.52) + panel3d.panY - pz * scale,
+                                depth: py
+                            };
+                        }
+
+                        onPaint: {
+                            var ctx = getContext("2d");
+                            ctx.clearRect(0, 0, width, height);
+                            // Intentionally draws NO grid, NO axes, and NO background fill
+                            // so the left viewport remains 100% pure AR passthrough.
+                        }
                     }
                 }
             }
 
-            Text {
-                text: bridge.selectedScannerValidationNotice
-                color: bridge.selectedScannerStatus === "CONFIG" ? "#38bdf8" : "#f59e0b"
-                font.pixelSize: 11
-                font.bold: true
-                elide: Text.ElideRight
+            // =================================================================
+            // RIGHT PANEL (~40%): PERIPHERAL APPLE GLASS HUD STACK
+            // Directly mimics scanarMini right_container:
+            //   1. Camera & Depth Sensor Preview Card (OPTICAL RGB + STEREO DEPTH)
+            //   2. 2D Orthographic Slice Header + Concentric Range-Ring Map Canvas
+            //   3. Multi-Tab Control Deck (M12 Cleanup / C-SLAM Peers / Sensors)
+            //   4. Translucent Apple Glass Studio Log
+            // =================================================================
+            ColumnLayout {
+                id: rightHudColumn
                 Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.preferredWidth: 400
+                spacing: 6
+
+                // -------------------------------------------------------------
+                // CARD 1: CAMERA & DEPTH SENSOR PREVIEW (Matches CameraPreviewCanvas)
+                // -------------------------------------------------------------
+                Rectangle {
+                    id: camPreviewCard
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 148
+                    radius: 12
+                    color: "#000000"
+                    border.color: "#85BAA164" // rgba(186, 161, 100, 0.52)
+                    border.width: 1
+                    clip: true
+
+                    // Top Translucent Header Strip (22px)
+                    Rectangle {
+                        id: camPreviewHeader
+                        anchors.top: parent.top
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        height: 22
+                        color: "#0DFFFFFF"
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 10
+                            anchors.rightMargin: 10
+                            spacing: 6
+
+                            Text {
+                                text: "OPTICAL RGB STREAM (LEFT)   ·   STEREO DEPTH HEATMAP (RIGHT)"
+                                color: root.avGoldBright
+                                font.pixelSize: 10
+                                font.bold: true
+                                Layout.fillWidth: true
+                                elide: Text.ElideRight
+                            }
+
+                            // Retained Multi-Sensor Overlapped & Dynamic Anchor Pill
+                            Rectangle {
+                                height: 16
+                                width: anchorMiniText.implicitWidth + 10
+                                radius: 4
+                                color: "#29BAA164"
+                                border.color: "#7ABAA164"
+                                border.width: 1
+
+                                Text {
+                                    id: anchorMiniText
+                                    anchors.centerIn: parent
+                                    text: "⚓ ANCHOR: " + (bridge.activeAnchorSensor || "AIRY")
+                                    color: root.avGoldBright
+                                    font.pixelSize: 9
+                                    font.bold: true
+                                }
+                            }
+                        }
+                    }
+
+                    // Dual Split Preview Body (Left: Optical RGB, Right: Stereo Depth / LiDAR)
+                    Item {
+                        anchors.top: camPreviewHeader.bottom
+                        anchors.bottom: parent.bottom
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+
+                        // Left Half: Optical RGB Stream Preview (Fixed 34x34 Logo Badge + Label)
+                        Item {
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            anchors.left: parent.left
+                            width: parent.width * 0.5
+
+                            ColumnLayout {
+                                anchors.centerIn: parent
+                                spacing: 5
+
+                                Item {
+                                    Layout.alignment: Qt.AlignHCenter
+                                    Layout.preferredWidth: 34
+                                    Layout.preferredHeight: 34
+
+                                    Image {
+                                        anchors.fill: parent
+                                        source: "assets/av_logo.png"
+                                        fillMode: Image.PreserveAspectFit
+                                        opacity: 0.85
+                                        smooth: true
+                                        mipmap: true
+                                    }
+                                }
+
+                                Text {
+                                    Layout.alignment: Qt.AlignHCenter
+                                    text: (bridge.geminiAcquisitionRate > 0 || bridge.cameraAcquisitionRate > 0)
+                                        ? ("Optical RGB Live (" + Math.max(bridge.geminiAcquisitionRate, bridge.cameraAcquisitionRate).toFixed(1) + " Hz)")
+                                        : "Optical RGB Ready"
+                                    color: root.avGoldBright
+                                    font.pixelSize: 10
+                                    font.weight: Font.DemiBold
+                                }
+                            }
+                        }
+
+                        // Dashed Champagne Gold Vertical Divider (Matches CameraPreviewCanvas)
+                        Canvas {
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            width: 2
+                            onPaint: {
+                                var ctx = getContext("2d");
+                                ctx.clearRect(0, 0, width, height);
+                                ctx.strokeStyle = "rgba(186, 161, 100, 0.35)";
+                                ctx.lineWidth = 1;
+                                ctx.setLineDash([4, 4]);
+                                ctx.beginPath();
+                                ctx.moveTo(1, 2);
+                                ctx.lineTo(1, height - 2);
+                                ctx.stroke();
+                            }
+                        }
+
+                        // Right Half: Stereo Depth Heatmap / LiDAR Preview
+                        Item {
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            anchors.right: parent.right
+                            width: parent.width * 0.5
+
+                            ColumnLayout {
+                                anchors.centerIn: parent
+                                spacing: 4
+
+                                Text {
+                                    Layout.alignment: Qt.AlignHCenter
+                                    text: bridge.isCapturing
+                                        ? ("Depth / LiDAR Live (" + bridge.pointsCaptured + " pts)")
+                                        : "Depth Stream Ready"
+                                    color: "#B8FCFBF8"
+                                    font.pixelSize: 10
+                                    font.weight: Font.DemiBold
+                                }
+
+                                Text {
+                                    Layout.alignment: Qt.AlignHCenter
+                                    text: "OVERLAPPED (" + Math.max(1, bridge.activeSensorCount) + " SENSORS)"
+                                    color: root.avGoldMuted
+                                    font.pixelSize: 9
+                                    font.bold: true
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // -------------------------------------------------------------
+                // CARD 2: 2D ORTHOGRAPHIC SLICE HEADER + CONCENTRIC RANGE-RING MAP
+                // Matches scanarMini slice_hdr + RealityCaptureMapCanvas
+                // -------------------------------------------------------------
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 26
+                    spacing: 4
+
+                    Text {
+                        text: "2D ORTHOGRAPHIC SLICE"
+                        color: root.avGoldBright
+                        font.pixelSize: 11
+                        font.bold: true
+                        font.letterSpacing: 1.0
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    // Retained AV Scan Layer Filter Pills (Colorized, Airy, Gemini, Fused, Diag)
+                    Repeater {
+                        model: [
+                            { label: "RGB", mode: "COLORIZED" },
+                            { label: "Airy", mode: "AIRY" },
+                            { label: "Gem", mode: "GEMINI" },
+                            { label: "Fused", mode: "FUSED" },
+                            { label: "Diag", mode: "DIAGNOSTIC" }
+                        ]
+                        delegate: Button {
+                            property bool isSel: bridge.activeDisplaySensor === modelData.mode
+                            text: modelData.label
+                            implicitHeight: 22
+                            implicitWidth: 42
+                            onClicked: {
+                                bridge.activeDisplaySensor = modelData.mode;
+                                canvas2d.requestPaint();
+                            }
+                            contentItem: Text {
+                                text: parent.text
+                                color: parent.isSel ? root.avGoldBright : root.avWhiteMuted
+                                font.pixelSize: 9
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            background: Rectangle {
+                                radius: 5
+                                color: parent.isSel ? "#2EBAA164" : "#12FFFFFF"
+                                border.color: parent.isSel ? root.avGoldPrimary : "#2EFFFFFF"
+                                border.width: 1
+                            }
+                        }
+                    }
+
+                    // Zoom Out / Zoom In / Reset View Controls (matches scanarMini -, +, ↺)
+                    Button {
+                        id: zoomOut2dBtn
+                        text: "-"
+                        implicitWidth: 24
+                        implicitHeight: 22
+                        onClicked: {
+                            panel2d.zoom2d = Math.max(2.0, panel2d.zoom2d * 0.8);
+                            canvas2d.requestPaint();
+                        }
+                        contentItem: Text {
+                            text: "-"
+                            color: root.avWhiteWarm
+                            font.pixelSize: 12
+                            font.bold: true
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: Rectangle {
+                            radius: 6
+                            color: zoomOut2dBtn.hovered ? "#2EBAA164" : "#17FFFFFF"
+                            border.color: "#42FFFFFF"
+                            border.width: 1
+                        }
+                    }
+
+                    Button {
+                        id: zoomIn2dBtn
+                        text: "+"
+                        implicitWidth: 24
+                        implicitHeight: 22
+                        onClicked: {
+                            panel2d.zoom2d = Math.min(140.0, panel2d.zoom2d * 1.25);
+                            canvas2d.requestPaint();
+                        }
+                        contentItem: Text {
+                            text: "+"
+                            color: root.avWhiteWarm
+                            font.pixelSize: 12
+                            font.bold: true
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: Rectangle {
+                            radius: 6
+                            color: zoomIn2dBtn.hovered ? "#2EBAA164" : "#17FFFFFF"
+                            border.color: "#42FFFFFF"
+                            border.width: 1
+                        }
+                    }
+
+                    Button {
+                        id: reset2dBtn
+                        text: "↺"
+                        implicitWidth: 24
+                        implicitHeight: 22
+                        onClicked: panel2d.recenter2D()
+                        contentItem: Text {
+                            text: "↺"
+                            color: root.avGoldBright
+                            font.pixelSize: 12
+                            font.bold: true
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: Rectangle {
+                            radius: 6
+                            color: reset2dBtn.hovered ? "#2EBAA164" : "#17FFFFFF"
+                            border.color: "#42FFFFFF"
+                            border.width: 1
+                        }
+                    }
+                }
+
+                // 2D Concentric Range-Ring Map Canvas (Matches RealityCaptureMapCanvas in scanarMini)
+                Rectangle {
+                    id: panel2d
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumHeight: 210
+                    radius: 12
+                    color: "#000000"
+                    border.color: "#8CBAA164" // rgba(186, 161, 100, 140)
+                    border.width: 1
+                    clip: true
+
+                    property real zoom2d: 18.0
+                    property real offsetX: 0.0
+                    property real offsetY: 0.0
+
+                    function recenter2D() {
+                        zoom2d = 18.0;
+                        offsetX = 0.0;
+                        offsetY = 0.0;
+                        canvas2d.requestPaint();
+                    }
+
+                    Canvas {
+                        id: canvas2d
+                        anchors.fill: parent
+
+                        onPaint: {
+                            var ctx = getContext("2d");
+                            var w = width;
+                            var h = height;
+                            ctx.clearRect(0, 0, w, h);
+
+                            // Translucent glass surface fill (rgba(255, 255, 255, 10))
+                            ctx.fillStyle = "rgba(255, 255, 255, 0.04)";
+                            ctx.fillRect(0, 0, w, h);
+
+                            var cx = w * 0.5 + panel2d.offsetX;
+                            var cy = h * 0.5 + panel2d.offsetY;
+                            var scale = panel2d.zoom2d;
+
+                            // 1. Subtle Crosshair at Origin (rgba(255, 255, 255, 34)) — NO rectangular grid!
+                            ctx.strokeStyle = "rgba(255, 255, 255, 0.13)";
+                            ctx.lineWidth = 1;
+                            ctx.setLineDash([]);
+                            ctx.beginPath();
+                            ctx.moveTo(0, cy);
+                            ctx.lineTo(w, cy);
+                            ctx.moveTo(cx, 0);
+                            ctx.lineTo(cx, h);
+                            ctx.stroke();
+
+                            // 2. Concentric Champagne-Gold Range Rings (5m, 10m, 20m, 30m, 50m)
+                            var rings = [5, 10, 20, 30, 50];
+                            ctx.font = "9px sans-serif";
+                            for (var ri = 0; ri < rings.length; ++ri) {
+                                var r_m = rings[ri];
+                                var r_px = r_m * scale;
+                                if (r_px < 15 || r_px > Math.max(w, h) * 1.4) continue;
+                                ctx.strokeStyle = "rgba(186, 161, 100, 0.22)";
+                                ctx.lineWidth = 1;
+                                ctx.setLineDash([4, 4]);
+                                ctx.beginPath();
+                                ctx.arc(cx, cy, r_px, 0, Math.PI * 2);
+                                ctx.stroke();
+
+                                ctx.fillStyle = "rgba(229, 201, 131, 0.72)";
+                                ctx.fillText(r_m + "m", cx + 4, cy - r_px + 11);
+                            }
+                            ctx.setLineDash([]);
+
+                            // 3. 2D Point Cloud Slice Projection
+                            var pts = bridge.isRegistrationActive
+                                ? bridge.getRegistrationDisplayPoints(25000)
+                                : bridge.getDisplayPoints(25000);
+                            var nPts = pts ? Math.floor(pts.length / 6) : 0;
+                            for (var i = 0; i < nPts; ++i) {
+                                var idx = i * 6;
+                                var px = cx + pts[idx] * scale;
+                                var py = cy - pts[idx + 1] * scale;
+                                if (px < 0 || px >= w || py < 0 || py >= h) continue;
+                                var r = Math.round(pts[idx + 3] * 255);
+                                var g = Math.round(pts[idx + 4] * 255);
+                                var b = Math.round(pts[idx + 5] * 255);
+                                ctx.fillStyle = "rgb(" + r + "," + g + "," + b + ")";
+                                ctx.fillRect(px - 1, py - 1, 2.2, 2.2);
+                            }
+
+                            // 4. Multi-Node C-SLAM Peer Scanner Markers (if active)
+                            var peers = bridge.cslamNodesList || [];
+                            var peerPalette = ["#BAA164", "#38BDF8", "#A855F7", "#EC4899", "#F59E0B", "#10B981"];
+                            for (var pi = 1; pi < peers.length; ++pi) {
+                                var peer = peers[pi];
+                                var pCol = peerPalette[pi % peerPalette.length];
+                                var peerX = cx + (pi * 2.2) * scale;
+                                var peerY = cy - ((pi % 2 === 0 ? 1.5 : -1.5)) * scale;
+                                ctx.strokeStyle = pCol;
+                                ctx.lineWidth = 1.5;
+                                ctx.beginPath();
+                                ctx.arc(peerX, peerY, 6, 0, Math.PI * 2);
+                                ctx.stroke();
+                                ctx.fillStyle = pCol;
+                                ctx.font = "bold 9px sans-serif";
+                                ctx.fillText(peer.nodeName || ("PEER-" + (pi + 1)), peerX + 9, peerY + 3);
+                            }
+
+                            // 5. Scanner Heading Arrow at Origin (Matches RealityCaptureMapCanvas)
+                            ctx.fillStyle = "#BAA164";
+                            ctx.strokeStyle = "#FCFBF8";
+                            ctx.lineWidth = 1.5;
+                            ctx.beginPath();
+                            ctx.moveTo(cx + 11, cy);
+                            ctx.lineTo(cx - 7, cy - 6.5);
+                            ctx.lineTo(cx - 3.5, cy);
+                            ctx.lineTo(cx - 7, cy + 6.5);
+                            ctx.closePath();
+                            ctx.fill();
+                            ctx.stroke();
+
+                            // 6. Top Translucent HUD Strip (24px)
+                            ctx.fillStyle = "rgba(255, 255, 255, 0.05)";
+                            ctx.fillRect(0, 0, w, 24);
+                            ctx.strokeStyle = "rgba(186, 161, 100, 0.28)";
+                            ctx.lineWidth = 1;
+                            ctx.beginPath();
+                            ctx.moveTo(0, 24);
+                            ctx.lineTo(w, 24);
+                            ctx.stroke();
+
+                            ctx.font = "bold 9px sans-serif";
+                            ctx.fillStyle = "#E5C983";
+                            var m12Tag = bridge.liveCleanupEnabled ? "M12 RT ON" : "RAW";
+                            var cslamTag = Math.max(1, bridge.cslamScannerCount) > 1
+                                ? ("C-SLAM (" + bridge.cslamScannerCount + ")")
+                                : "C-SLAM";
+                            ctx.fillText("LAYER: " + (bridge.activeDisplaySensor || "COLORIZED") + " · " + m12Tag + " · " + cslamTag, 10, 15);
+
+                            var voxText = (bridge.pointsCaptured || 0) + " VOXELS";
+                            ctx.fillStyle = "#FCFBF8";
+                            ctx.fillText(voxText, Math.max(220, w - 85), 15);
+
+                            // 7. Bottom Translucent Telemetry Strip (36px)
+                            ctx.fillStyle = "rgba(255, 255, 255, 0.05)";
+                            ctx.fillRect(0, h - 36, w, 36);
+                            ctx.strokeStyle = "rgba(255, 255, 255, 0.20)";
+                            ctx.beginPath();
+                            ctx.moveTo(0, h - 36);
+                            ctx.lineTo(w, h - 36);
+                            ctx.stroke();
+
+                            ctx.font = "9px sans-serif";
+                            ctx.fillStyle = "#FCFBF8";
+                            ctx.fillText(
+                                "POS: X=" + bridge.currentPoseX.toFixed(2) + "m  Y=" + bridge.currentPoseY.toFixed(2) + "m  Z=" + bridge.currentPoseZ.toFixed(2) + "m  |  YAW=" + bridge.currentYaw.toFixed(1) + "°",
+                                10,
+                                h - 21
+                            );
+                            ctx.fillStyle = "#E5C983";
+                            ctx.fillText(
+                                "PATH: " + bridge.trajectoryPointCount + " poses  |  SCALE: " + scale.toFixed(1) + " px/m  |  PEERS: " + Math.max(1, bridge.cslamScannerCount),
+                                10,
+                                h - 7
+                            );
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.LeftButton | Qt.RightButton
+                            property real lastX: 0
+                            property real lastY: 0
+                            onPressed: function(mouse) {
+                                lastX = mouse.x;
+                                lastY = mouse.y;
+                            }
+                            onPositionChanged: function(mouse) {
+                                if (pressed) {
+                                    panel2d.offsetX += (mouse.x - lastX);
+                                    panel2d.offsetY += (mouse.y - lastY);
+                                    lastX = mouse.x;
+                                    lastY = mouse.y;
+                                    canvas2d.requestPaint();
+                                }
+                            }
+                            onWheel: function(wheel) {
+                                if (wheel.angleDelta.y > 0) panel2d.zoom2d = Math.min(140.0, panel2d.zoom2d * 1.15);
+                                else panel2d.zoom2d = Math.max(2.0, panel2d.zoom2d * 0.87);
+                                canvas2d.requestPaint();
+                            }
+                        }
+                    }
+                }
+
+                // -------------------------------------------------------------
+                // CARD 3: MULTI-TAB APPLE GLASS CONTROL DECK (168px)
+                // Combines scanarMini's M12 + C-SLAM cards with AV Scan's
+                // interactive cleanup, multi-node C-SLAM, and sensor controls
+                // -------------------------------------------------------------
+                Rectangle {
+                    id: controlDeckCard
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 168
+                    radius: 10
+                    color: "#0AFFFFFF" // rgba(255, 255, 255, 0.04)
+                    border.color: "#61BAA164" // rgba(186, 161, 100, 0.38)
+                    border.width: 1
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 8
+                        spacing: 6
+
+                        // Deck Tab Selector Strip
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            Repeater {
+                                model: [
+                                    "✦ M12 REAL-TIME & POST CLEANUP",
+                                    "🌐 C-SLAM PEERS (∞)",
+                                    "⚙ SENSORS & RECON"
+                                ]
+                                delegate: Button {
+                                    property bool activeTab: root.rightDeckTab === index
+                                    text: modelData
+                                    Layout.fillWidth: true
+                                    implicitHeight: 24
+                                    onClicked: root.rightDeckTab = index
+                                    contentItem: Text {
+                                        text: parent.text
+                                        color: parent.activeTab ? root.avGoldBright : root.avWhiteMuted
+                                        font.pixelSize: 10
+                                        font.bold: true
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                        elide: Text.ElideRight
+                                    }
+                                    background: Rectangle {
+                                        radius: 6
+                                        color: parent.activeTab ? "#2EBAA164" : "#12FFFFFF"
+                                        border.color: parent.activeTab ? root.avGoldPrimary : "#2EFFFFFF"
+                                        border.width: 1
+                                    }
+                                }
+                            }
+                        }
+
+                        // TAB 0: M12 REAL-TIME & POST-SCAN CLEANUP (Matches scanarMini m12_card)
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            visible: root.rightDeckTab === 0
+                            spacing: 6
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 14
+
+                                CheckBox {
+                                    id: deckRtM12Check
+                                    checked: bridge.liveCleanupEnabled
+                                    text: "Real-Time M12 (Voxel 2cm + SOR + ROR)"
+                                    onToggled: bridge.liveCleanupEnabled = checked
+                                    indicator: Rectangle {
+                                        implicitWidth: 16
+                                        implicitHeight: 16
+                                        x: deckRtM12Check.leftPadding
+                                        y: parent.height / 2 - height / 2
+                                        radius: 4
+                                        color: deckRtM12Check.checked ? "#38BAA164" : "#14FFFFFF"
+                                        border.color: deckRtM12Check.checked ? root.avGoldPrimary : "#47FFFFFF"
+                                        border.width: 1
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            visible: deckRtM12Check.checked
+                                            text: "✓"
+                                            color: root.avGoldBright
+                                            font.pixelSize: 11
+                                            font.bold: true
+                                        }
+                                    }
+                                    contentItem: Text {
+                                        text: deckRtM12Check.text
+                                        color: root.avWhiteWarm
+                                        font.pixelSize: 11
+                                        leftPadding: deckRtM12Check.indicator.width + 6
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                }
+
+                                CheckBox {
+                                    id: deckFloorLockCheck
+                                    checked: bridge.liveGroundLockEnabled
+                                    text: "Live Z=0 Floor Lock"
+                                    onToggled: bridge.liveGroundLockEnabled = checked
+                                    indicator: Rectangle {
+                                        implicitWidth: 16
+                                        implicitHeight: 16
+                                        x: deckFloorLockCheck.leftPadding
+                                        y: parent.height / 2 - height / 2
+                                        radius: 4
+                                        color: deckFloorLockCheck.checked ? "#38BAA164" : "#14FFFFFF"
+                                        border.color: deckFloorLockCheck.checked ? root.avGoldPrimary : "#47FFFFFF"
+                                        border.width: 1
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            visible: deckFloorLockCheck.checked
+                                            text: "✓"
+                                            color: root.avGoldBright
+                                            font.pixelSize: 11
+                                            font.bold: true
+                                        }
+                                    }
+                                    contentItem: Text {
+                                        text: deckFloorLockCheck.text
+                                        color: root.avGoldBright
+                                        font.pixelSize: 11
+                                        leftPadding: deckFloorLockCheck.indicator.width + 6
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: "Pipeline: Voxel 2.0cm  ·  SOR k=20 (2.0σ)  ·  ROR r=10cm  ·  " + (bridge.cleanupStatus || "M12 Real-Time Ready")
+                                color: root.avWhiteMuted
+                                font.pixelSize: 10
+                                font.family: "Monospace"
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 6
+
+                                Button {
+                                    text: "✦ Preview Cleanup"
+                                    Layout.fillWidth: true
+                                    implicitHeight: 28
+                                    onClicked: bridge.runPointCloudCleanupPreview()
+                                    contentItem: Text {
+                                        text: parent.text
+                                        color: root.avGoldBright
+                                        font.pixelSize: 11
+                                        font.bold: true
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    background: Rectangle {
+                                        radius: 7
+                                        color: "#29BAA164"
+                                        border.color: root.avGoldPrimary
+                                        border.width: 1
+                                    }
+                                }
+
+                                Button {
+                                    text: "↺ Reset"
+                                    implicitWidth: 68
+                                    implicitHeight: 28
+                                    onClicked: bridge.resetPointCloudCleanupPreview()
+                                    contentItem: Text {
+                                        text: parent.text
+                                        color: root.avWhiteWarm
+                                        font.pixelSize: 11
+                                        font.bold: true
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    background: Rectangle {
+                                        radius: 7
+                                        color: "#17FFFFFF"
+                                        border.color: "#42FFFFFF"
+                                        border.width: 1
+                                    }
+                                }
+
+                                Button {
+                                    text: "✓ Commit"
+                                    implicitWidth: 78
+                                    implicitHeight: 28
+                                    onClicked: bridge.commitCleanedPointCloud()
+                                    contentItem: Text {
+                                        text: parent.text
+                                        color: root.avStatusOk
+                                        font.pixelSize: 11
+                                        font.bold: true
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    background: Rectangle {
+                                        radius: 7
+                                        color: "#1F22C55E"
+                                        border.color: "#7022C55E"
+                                        border.width: 1
+                                    }
+                                }
+
+                                Button {
+                                    text: "Studio..."
+                                    implicitWidth: 72
+                                    implicitHeight: 28
+                                    onClicked: {
+                                        bridge.openCleanupWizard();
+                                        cleanupExportDialog.open();
+                                    }
+                                    contentItem: Text {
+                                        text: parent.text
+                                        color: root.avGoldBright
+                                        font.pixelSize: 11
+                                        font.bold: true
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    background: Rectangle {
+                                        radius: 7
+                                        color: "#1FBAA164"
+                                        border.color: "#7ABAA164"
+                                        border.width: 1
+                                    }
+                                }
+                            }
+                        }
+
+                        // TAB 1: C-SLAM PEER SCANNERS (∞) (Matches scanarMini cslam_card)
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            visible: root.rightDeckTab === 1
+                            spacing: 6
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 6
+
+                                Text {
+                                    text: "Non-Overlap: IMU Orient + Arbitrary Sep  ·  Snap ≥15%"
+                                    color: root.avGoldBright
+                                    font.pixelSize: 10
+                                    font.bold: true
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                }
+
+                                Button {
+                                    id: cslamColorModeBtn
+                                    text: bridge.cslamColorByScanner ? "🎨 Scanner Colors" : "🎨 True RGB"
+                                    implicitHeight: 22
+                                    implicitWidth: 116
+                                    onClicked: {
+                                        bridge.cslamColorByScanner = !bridge.cslamColorByScanner;
+                                        canvas2d.requestPaint();
+                                    }
+                                    contentItem: Text {
+                                        text: cslamColorModeBtn.text
+                                        color: root.avGoldBright
+                                        font.pixelSize: 10
+                                        font.bold: true
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    background: Rectangle {
+                                        radius: 6
+                                        color: "#2EBAA164"
+                                        border.color: root.avGoldPrimary
+                                        border.width: 1
+                                    }
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 6
+
+                                Rectangle {
+                                    height: 22
+                                    width: localPeerBadge.implicitWidth + 14
+                                    radius: 5
+                                    color: "#24BAA164"
+                                    border.color: root.avGoldPrimary
+                                    border.width: 1
+
+                                    Text {
+                                        id: localPeerBadge
+                                        anchors.centerIn: parent
+                                        text: "● LOCAL (" + (bridge.nodeDisplayName || "Primary") + ") · ANCHOR"
+                                        color: root.avGoldBright
+                                        font.pixelSize: 10
+                                        font.family: "Monospace"
+                                        font.bold: true
+                                    }
+                                }
+
+                                Text {
+                                    text: bridge.cslamStatusSummary || "Listening for Peer Scanners (Any OS / Any Sensor)..."
+                                    color: root.avWhiteMuted
+                                    font.pixelSize: 10
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 6
+
+                                Button {
+                                    text: "🌐 Open Multi-Node Mesh Manager"
+                                    Layout.fillWidth: true
+                                    implicitHeight: 28
+                                    onClicked: multiNodeDialog.open()
+                                    contentItem: Text {
+                                        text: parent.text
+                                        color: root.avGoldBright
+                                        font.pixelSize: 11
+                                        font.bold: true
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    background: Rectangle {
+                                        radius: 7
+                                        color: "#29BAA164"
+                                        border.color: root.avGoldPrimary
+                                        border.width: 1
+                                    }
+                                }
+
+                                Button {
+                                    text: "🔀 Offline Reg (M9)"
+                                    implicitWidth: 126
+                                    implicitHeight: 28
+                                    onClicked: {
+                                        bridge.refreshRegistrationProjectScans();
+                                        offlineRegistrationDialog.open();
+                                    }
+                                    contentItem: Text {
+                                        text: parent.text
+                                        color: root.avWhiteWarm
+                                        font.pixelSize: 11
+                                        font.bold: true
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    background: Rectangle {
+                                        radius: 7
+                                        color: "#17FFFFFF"
+                                        border.color: "#42FFFFFF"
+                                        border.width: 1
+                                    }
+                                }
+                            }
+                        }
+
+                        // TAB 2: SENSORS, DYNAMIC ANCHOR & CAMERA RECONSTRUCTION
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            visible: root.rightDeckTab === 2
+                            spacing: 6
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+
+                                Text {
+                                    text: "⚓ Dynamic Anchor: " + (bridge.activeAnchorName || bridge.activeAnchorSensor || "AIRY")
+                                    color: root.avGoldBright
+                                    font.pixelSize: 10
+                                    font.bold: true
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                }
+
+                                ComboBox {
+                                    id: cameraBackendCombo
+                                    model: ["LingBot (Fast)", "ABot (Dense)"]
+                                    currentIndex: bridge.selectedCameraBackend === "ABOT_MVS" ? 1 : 0
+                                    implicitWidth: 126
+                                    implicitHeight: 22
+                                    onActivated: {
+                                        bridge.selectedCameraBackend = (currentIndex === 1 ? "ABOT_MVS" : "LINGBOT");
+                                    }
+                                    contentItem: Text {
+                                        text: cameraBackendCombo.displayText
+                                        color: root.avGoldBright
+                                        font.pixelSize: 10
+                                        font.bold: true
+                                        verticalAlignment: Text.AlignVCenter
+                                        leftPadding: 8
+                                    }
+                                    background: Rectangle {
+                                        radius: 6
+                                        color: "#19BAA164"
+                                        border.color: "#7ABAA164"
+                                        border.width: 1
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: "Airy: " + bridge.airyPointsCaptured + " pts (" + bridge.airyAcquisitionRate.toFixed(0) + "Hz)  |  Gemini: " + bridge.geminiPointsCaptured + " pts  |  Cam: " + bridge.cameraPointsCaptured + " pts"
+                                color: root.avWhiteMuted
+                                font.pixelSize: 10
+                                font.family: "Monospace"
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 6
+
+                                Button {
+                                    text: "⚙ Configure Sensors"
+                                    Layout.fillWidth: true
+                                    implicitHeight: 28
+                                    onClicked: configureSensorsDialog.open()
+                                    contentItem: Text {
+                                        text: parent.text
+                                        color: root.avGoldBright
+                                        font.pixelSize: 11
+                                        font.bold: true
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    background: Rectangle {
+                                        radius: 7
+                                        color: "#29BAA164"
+                                        border.color: root.avGoldPrimary
+                                        border.width: 1
+                                    }
+                                }
+
+                                Button {
+                                    text: "🔗 Extrinsics & Fusion (M7/M8)"
+                                    Layout.fillWidth: true
+                                    implicitHeight: 28
+                                    onClicked: {
+                                        bridge.openCalibrationWizard();
+                                        calibrationFusionDialog.open();
+                                    }
+                                    contentItem: Text {
+                                        text: parent.text
+                                        color: root.avWhiteWarm
+                                        font.pixelSize: 11
+                                        font.bold: true
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    background: Rectangle {
+                                        radius: 7
+                                        color: "#17FFFFFF"
+                                        border.color: "#42FFFFFF"
+                                        border.width: 1
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // -------------------------------------------------------------
+                // CARD 4: TRANSLUCENT APPLE GLASS STUDIO LOG (Matches self.log_view)
+                // -------------------------------------------------------------
+                Rectangle {
+                    id: studioLogCard
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 74
+                    radius: 10
+                    color: "#0AFFFFFF" // rgba(255, 255, 255, 0.04)
+                    border.color: "#2EFFFFFF" // rgba(255, 255, 255, 0.18)
+                    border.width: 1
+                    clip: true
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 8
+                        spacing: 2
+
+                        Text {
+                            text: "[AV-OS] Artificial Vision Apple Glass AR Passthrough Initialized — Clear Left Viewport Active."
+                            color: root.avGoldBright
+                            font.pixelSize: 10
+                            font.family: "Monospace"
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+                        Text {
+                            text: "[SENSOR] Scanner '" + (bridge.selectedScannerName || "Default") + "' · Overlapped Multi-Sensor Fusion · Anchor: " + (bridge.activeAnchorSensor || "AIRY")
+                            color: root.avWhiteMuted
+                            font.pixelSize: 10
+                            font.family: "Monospace"
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+                        Text {
+                            text: "[STATUS] " + (bridge.selectedScannerValidationNotice || "All spatial pipelines nominal. Ready for capture.")
+                            color: "#B8FCFBF8"
+                            font.pixelSize: 10
+                            font.family: "Monospace"
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // ROW 4: TRANSLUCENT APPLE GLASS FOOTER STATUS BAR (24px)
+        // Matches scanarMini self.statusBar()
+        // ---------------------------------------------------------------------
+        Rectangle {
+            id: glassFooterBar
+            Layout.fillWidth: true
+            Layout.preferredHeight: 24
+            radius: 7
+            color: "#0AFFFFFF"
+            border.color: "#52BAA164"
+            border.width: 1
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                spacing: 8
+
+                Text {
+                    text: "VERIFY · DIRECT · CLARIFY  |  AV Scan Apple Glass AR Passthrough Active  |  M12 RT " + (bridge.liveCleanupEnabled ? "ON" : "OFF") + "  |  C-SLAM ∞ Ready"
+                    color: root.avGoldBright
+                    font.pixelSize: 10
+                    font.family: "Monospace"
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                }
+
+                Text {
+                    text: "HOST: " + (bridge.hostHardware || "Linux Spatial Node") + "  |  RAM: " + (bridge.hostMemory || "Ready")
+                    color: root.avWhiteMuted
+                    font.pixelSize: 10
+                    font.family: "Monospace"
+                }
             }
         }
     }
@@ -2182,19 +2126,19 @@ ApplicationWindow {
         standardButtons: Dialog.Ok | Dialog.Cancel
 
         background: Rectangle {
-            color: "#181e28"
+            color: "#0A0A0E"
             radius: 8
-            border.color: "#334155"
+            border.color: "#2A2A34"
         }
 
         header: Rectangle {
             height: 52
-            color: "#202836"
+            color: "#121217"
             radius: 8
             Text {
                 anchors.centerIn: parent
                 text: "Create New Project"
-                color: "white"
+                color: "#F4F4F6"
                 font.bold: true
                 font.pixelSize: 15
             }
@@ -2206,7 +2150,7 @@ ApplicationWindow {
 
             Text {
                 text: "Project Name:"
-                color: "#cbd5e1"
+                color: "#D4D4D8"
                 font.pixelSize: 12
                 font.bold: true
             }
@@ -2214,18 +2158,18 @@ ApplicationWindow {
                 id: projNameInput
                 Layout.fillWidth: true
                 placeholderText: "e.g., Industrial Plant Survey"
-                color: "white"
+                color: "#F4F4F6"
                 font.pixelSize: 13
                 background: Rectangle {
-                    color: "#0f1218"
+                    color: "#0A0A0E"
                     radius: 4
-                    border.color: "#3b4556"
+                    border.color: "#2A2A34"
                 }
             }
 
             Text {
                 text: "Description (Optional):"
-                color: "#cbd5e1"
+                color: "#D4D4D8"
                 font.pixelSize: 12
                 font.bold: true
             }
@@ -2233,12 +2177,12 @@ ApplicationWindow {
                 id: projDescInput
                 Layout.fillWidth: true
                 placeholderText: "Survey notes, building ID, inspection parameters"
-                color: "white"
+                color: "#F4F4F6"
                 font.pixelSize: 13
                 background: Rectangle {
-                    color: "#0f1218"
+                    color: "#0A0A0E"
                     radius: 4
-                    border.color: "#3b4556"
+                    border.color: "#2A2A34"
                 }
             }
         }
@@ -2267,19 +2211,19 @@ ApplicationWindow {
         }
 
         background: Rectangle {
-            color: "#181e28"
+            color: "#0A0A0E"
             radius: 8
-            border.color: "#334155"
+            border.color: "#2A2A34"
         }
 
         header: Rectangle {
             height: 52
-            color: "#202836"
+            color: "#121217"
             radius: 8
             Text {
                 anchors.centerIn: parent
                 text: "Open Existing Project"
-                color: "white"
+                color: "#F4F4F6"
                 font.bold: true
                 font.pixelSize: 15
             }
@@ -2295,7 +2239,7 @@ ApplicationWindow {
 
                 Text {
                     text: "Select a project from the repository:"
-                    color: "#94a3b8"
+                    color: "#A1A1AA"
                     font.pixelSize: 12
                     Layout.alignment: Qt.AlignVCenter
                 }
@@ -2308,7 +2252,7 @@ ApplicationWindow {
 
                     Text {
                         text: "Sort:"
-                        color: "#64748b"
+                        color: "#8E8E99"
                         font.pixelSize: 11
                         Layout.alignment: Qt.AlignVCenter
                     }
@@ -2318,13 +2262,13 @@ ApplicationWindow {
                         implicitHeight: 26
                         implicitWidth: 64
                         background: Rectangle {
-                            color: bridge.projectSortMode === 0 ? "#0f766e" : (parent.hovered ? "#334155" : "#1e293b")
-                            border.color: bridge.projectSortMode === 0 ? "#14b8a6" : "#475569"
+                            color: bridge.projectSortMode === 0 ? "#2DD4BF" : (parent.hovered ? "#2A2A34" : "#121217")
+                            border.color: bridge.projectSortMode === 0 ? "#14b8a6" : "#2A2A34"
                             radius: 4
                         }
                         contentItem: Text {
                             text: parent.text
-                            color: bridge.projectSortMode === 0 ? "#ffffff" : "#cbd5e1"
+                            color: bridge.projectSortMode === 0 ? "#ffffff" : "#D4D4D8"
                             font.bold: bridge.projectSortMode === 0
                             font.pixelSize: 10
                             horizontalAlignment: Text.AlignHCenter
@@ -2338,13 +2282,13 @@ ApplicationWindow {
                         implicitHeight: 26
                         implicitWidth: 64
                         background: Rectangle {
-                            color: bridge.projectSortMode === 1 ? "#0f766e" : (parent.hovered ? "#334155" : "#1e293b")
-                            border.color: bridge.projectSortMode === 1 ? "#14b8a6" : "#475569"
+                            color: bridge.projectSortMode === 1 ? "#2DD4BF" : (parent.hovered ? "#2A2A34" : "#121217")
+                            border.color: bridge.projectSortMode === 1 ? "#14b8a6" : "#2A2A34"
                             radius: 4
                         }
                         contentItem: Text {
                             text: parent.text
-                            color: bridge.projectSortMode === 1 ? "#ffffff" : "#cbd5e1"
+                            color: bridge.projectSortMode === 1 ? "#ffffff" : "#D4D4D8"
                             font.bold: bridge.projectSortMode === 1
                             font.pixelSize: 10
                             horizontalAlignment: Text.AlignHCenter
@@ -2358,13 +2302,13 @@ ApplicationWindow {
                         implicitHeight: 26
                         implicitWidth: 72
                         background: Rectangle {
-                            color: bridge.projectSortMode === 2 ? "#0f766e" : (parent.hovered ? "#334155" : "#1e293b")
-                            border.color: bridge.projectSortMode === 2 ? "#14b8a6" : "#475569"
+                            color: bridge.projectSortMode === 2 ? "#2DD4BF" : (parent.hovered ? "#2A2A34" : "#121217")
+                            border.color: bridge.projectSortMode === 2 ? "#14b8a6" : "#2A2A34"
                             radius: 4
                         }
                         contentItem: Text {
                             text: parent.text
-                            color: bridge.projectSortMode === 2 ? "#ffffff" : "#cbd5e1"
+                            color: bridge.projectSortMode === 2 ? "#ffffff" : "#D4D4D8"
                             font.bold: bridge.projectSortMode === 2
                             font.pixelSize: 10
                             horizontalAlignment: Text.AlignHCenter
@@ -2378,13 +2322,13 @@ ApplicationWindow {
                         implicitHeight: 26
                         implicitWidth: 72
                         background: Rectangle {
-                            color: bridge.projectSortMode === 3 ? "#0f766e" : (parent.hovered ? "#334155" : "#1e293b")
-                            border.color: bridge.projectSortMode === 3 ? "#14b8a6" : "#475569"
+                            color: bridge.projectSortMode === 3 ? "#2DD4BF" : (parent.hovered ? "#2A2A34" : "#121217")
+                            border.color: bridge.projectSortMode === 3 ? "#14b8a6" : "#2A2A34"
                             radius: 4
                         }
                         contentItem: Text {
                             text: parent.text
-                            color: bridge.projectSortMode === 3 ? "#ffffff" : "#cbd5e1"
+                            color: bridge.projectSortMode === 3 ? "#ffffff" : "#D4D4D8"
                             font.bold: bridge.projectSortMode === 3
                             font.pixelSize: 10
                             horizontalAlignment: Text.AlignHCenter
@@ -2406,8 +2350,8 @@ ApplicationWindow {
                     width: projListView.width
                     height: 64
                     radius: 6
-                    color: itemMouseArea.containsMouse ? "#273244" : "#1e2634"
-                    border.color: itemMouseArea.containsMouse ? "#3b82f6" : "#334155"
+                    color: itemMouseArea.containsMouse ? "#1F1F26" : "#121217"
+                    border.color: itemMouseArea.containsMouse ? "#B89D64" : "#2A2A34"
 
                     MouseArea {
                         id: itemMouseArea
@@ -2438,20 +2382,20 @@ ApplicationWindow {
                                 spacing: 8
                                 Text {
                                     text: modelData.name
-                                    color: "#f8fafc"
+                                    color: "#F4F4F6"
                                     font.bold: true
                                     font.pixelSize: 13
                                 }
                                 Text {
                                     text: "• " + modelData.id + " • " + modelData.date
-                                    color: "#64748b"
+                                    color: "#8E8E99"
                                     font.pixelSize: 10
                                 }
                             }
 
                             Text {
                                 text: (modelData.description && modelData.description.trim() !== "") ? modelData.description : "No description"
-                                color: (modelData.description && modelData.description.trim() !== "") ? "#94a3b8" : "#475569"
+                                color: (modelData.description && modelData.description.trim() !== "") ? "#A1A1AA" : "#2A2A34"
                                 font.pixelSize: 11
                                 font.italic: !(modelData.description && modelData.description.trim() !== "")
                                 elide: Text.ElideRight
@@ -2472,7 +2416,7 @@ ApplicationWindow {
                                 canvas2d.requestPaint();
                             }
                             contentItem: Text { text: parent.text; color: "white"; font.bold: true; font.pixelSize: 11; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                            background: Rectangle { color: parent.hovered ? "#0284c7" : "#0369a1"; radius: 4 }
+                            background: Rectangle { color: parent.hovered ? "#B89D64" : "#9A804D"; radius: 4 }
                         }
                     }
                 }
@@ -2541,22 +2485,22 @@ ApplicationWindow {
         }
 
         background: Rectangle {
-            color: "#161b24"
+            color: "#0A0A0E"
             radius: 12
-            border.color: "#334155"
+            border.color: "#2A2A34"
             border.width: 1
         }
 
         header: Rectangle {
             height: 56
-            color: "#1e2838"
+            color: "#121217"
             radius: 12
             Rectangle {
                 anchors.bottom: parent.bottom
                 anchors.left: parent.left
                 anchors.right: parent.right
                 height: 1
-                color: "#334155"
+                color: "#2A2A34"
             }
             RowLayout {
                 anchors.fill: parent
@@ -2566,7 +2510,7 @@ ApplicationWindow {
 
                 Text {
                     text: "Hardware & Scanner Configuration"
-                    color: "white"
+                    color: "#F4F4F6"
                     font.bold: true
                     font.pixelSize: 15
                 }
@@ -2578,12 +2522,12 @@ ApplicationWindow {
                         implicitHeight: 32
                         implicitWidth: 160
                         radius: 6
-                        color: configureSensorsDialog.currentTab === 0 ? "#0284c7" : "#0f172a"
-                        border.color: configureSensorsDialog.currentTab === 0 ? "#38bdf8" : "#334155"
+                        color: configureSensorsDialog.currentTab === 0 ? "#B89D64" : "#0A0A0E"
+                        border.color: configureSensorsDialog.currentTab === 0 ? "#B89D64" : "#2A2A34"
                         Text {
                             anchors.centerIn: parent
                             text: "📦 Sensor Composition"
-                            color: "white"
+                            color: configureSensorsDialog.currentTab === 0 ? "#09090B" : "#14141A"
                             font.bold: true
                             font.pixelSize: 11
                         }
@@ -2598,12 +2542,12 @@ ApplicationWindow {
                         implicitHeight: 32
                         implicitWidth: 160
                         radius: 6
-                        color: configureSensorsDialog.currentTab === 1 ? "#0284c7" : "#0f172a"
-                        border.color: configureSensorsDialog.currentTab === 1 ? "#38bdf8" : "#334155"
+                        color: configureSensorsDialog.currentTab === 1 ? "#B89D64" : "#0A0A0E"
+                        border.color: configureSensorsDialog.currentTab === 1 ? "#B89D64" : "#2A2A34"
                         Text {
                             anchors.centerIn: parent
                             text: "🔍 Discover Devices"
-                            color: "white"
+                            color: configureSensorsDialog.currentTab === 1 ? "#09090B" : "#14141A"
                             font.bold: true
                             font.pixelSize: 11
                         }
@@ -2620,14 +2564,14 @@ ApplicationWindow {
                         implicitHeight: 32
                         implicitWidth: 170
                         radius: 6
-                        color: configureSensorsDialog.currentTab === 2 ? "#0284c7" : "#0f172a"
-                        border.color: configureSensorsDialog.currentTab === 2 ? "#38bdf8" : "#334155"
+                        color: configureSensorsDialog.currentTab === 2 ? "#B89D64" : "#0A0A0E"
+                        border.color: configureSensorsDialog.currentTab === 2 ? "#B89D64" : "#2A2A34"
                         RowLayout {
                             anchors.centerIn: parent
                             spacing: 6
                             Text {
                                 text: "📚 Sensor Catalog"
-                                color: "white"
+                                color: configureSensorsDialog.currentTab === 2 ? "#09090B" : "#14141A"
                                 font.bold: true
                                 font.pixelSize: 11
                             }
@@ -2635,13 +2579,13 @@ ApplicationWindow {
                                 implicitHeight: 18
                                 implicitWidth: catalogBadgeText.contentWidth + 10
                                 radius: 9
-                                color: configureSensorsDialog.currentTab === 2 ? "#0369a1" : "#1e293b"
-                                border.color: configureSensorsDialog.currentTab === 2 ? "#7dd3fc" : "#475569"
+                                color: configureSensorsDialog.currentTab === 2 ? "#9A804D" : "#121217"
+                                border.color: configureSensorsDialog.currentTab === 2 ? "#B89D64" : "#2A2A34"
                                 Text {
                                     id: catalogBadgeText
                                     anchors.centerIn: parent
                                     text: "" + bridge.ecosystemModelCount
-                                    color: configureSensorsDialog.currentTab === 2 ? "#ffffff" : "#94a3b8"
+                                    color: configureSensorsDialog.currentTab === 2 ? "#ffffff" : "#A1A1AA"
                                     font.bold: true
                                     font.pixelSize: 10
                                 }
@@ -2664,12 +2608,12 @@ ApplicationWindow {
                     implicitHeight: 24
                     implicitWidth: 150
                     radius: 4
-                    color: "#0f172a"
-                    border.color: "#38bdf8"
+                    color: "#0A0A0E"
+                    border.color: "#B89D64"
                     Text {
                         anchors.centerIn: parent
                         text: "Host: scanar-01 (Linux)"
-                        color: "#38bdf8"
+                        color: "#D4BE8D"
                         font.pixelSize: 10
                         font.bold: true
                     }
@@ -2691,7 +2635,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Text {
                         text: "Scanner Configuration Name:"
-                        color: "#f1f5f9"
+                        color: "#F4F4F6"
                         font.pixelSize: 12
                         font.bold: true
                     }
@@ -2705,16 +2649,16 @@ ApplicationWindow {
                         }
                         contentItem: Text {
                             text: parent.text
-                            color: "#38bdf8"
+                            color: "#D4BE8D"
                             font.pixelSize: 11
                             font.bold: true
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
                         }
                         background: Rectangle {
-                            color: parent.hovered ? "#1e293b" : "#0f172a"
+                            color: parent.hovered ? "#121217" : "#0A0A0E"
                             radius: 4
-                            border.color: "#38bdf8"
+                            border.color: "#B89D64"
                         }
                     }
                 }
@@ -2724,16 +2668,16 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     implicitHeight: 38
                     text: "RoboSense Airy + Gemini 336L + VITURE Ultra"
-                    color: "white"
+                    color: "#F4F4F6"
                     font.pixelSize: 13
                     leftPadding: 12
                     rightPadding: 12
                     topPadding: 8
                     bottomPadding: 8
                     background: Rectangle {
-                        color: "#0f172a"
+                        color: "#0A0A0E"
                         radius: 6
-                        border.color: customConfigNameInput.activeFocus ? "#38bdf8" : "#334155"
+                        border.color: customConfigNameInput.activeFocus ? "#B89D64" : "#2A2A34"
                         border.width: customConfigNameInput.activeFocus ? 2 : 1
                     }
                 }
@@ -2742,14 +2686,14 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Text {
                         text: "Select Hardware Sensors to Compose:"
-                        color: "#f1f5f9"
+                        color: "#F4F4F6"
                         font.pixelSize: 12
                         font.bold: true
                     }
                     Item { Layout.fillWidth: true }
                     Text {
                         text: configureSensorsDialog.getSelectedIds().length + " of " + configureSensorsDialog.availableProfiles.length + " selected"
-                        color: "#38bdf8"
+                        color: "#D4BE8D"
                         font.pixelSize: 11
                         font.bold: true
                     }
@@ -2773,8 +2717,8 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 implicitHeight: 66
                                 radius: 8
-                                color: isSelected ? "#1e293b" : "#111827"
-                                border.color: isSelected ? "#38bdf8" : "#28303e"
+                                color: isSelected ? "#121217" : "#0A0A0E"
+                                border.color: isSelected ? "#B89D64" : "#1F1F26"
                                 border.width: isSelected ? 2 : 1
 
                                 MouseArea {
@@ -2809,7 +2753,7 @@ ApplicationWindow {
                                             spacing: 8
                                             Text {
                                                 text: prof.name
-                                                color: "#f8fafc"
+                                                color: "#F4F4F6"
                                                 font.pixelSize: 14
                                                 font.bold: true
                                             }
@@ -2817,13 +2761,13 @@ ApplicationWindow {
                                                 implicitHeight: 20
                                                 implicitWidth: tagText.contentWidth + 12
                                                 radius: 4
-                                                color: "#0f172a"
-                                                border.color: prof.tagColor || "#38bdf8"
+                                                color: "#0A0A0E"
+                                                border.color: prof.tagColor || "#B89D64"
                                                 Text {
                                                     id: tagText
                                                     anchors.centerIn: parent
                                                     text: prof.tag || "SENSOR"
-                                                    color: prof.tagColor || "#38bdf8"
+                                                    color: prof.tagColor || "#D4BE8D"
                                                     font.pixelSize: 10
                                                     font.bold: true
                                                 }
@@ -2832,12 +2776,12 @@ ApplicationWindow {
                                                 implicitHeight: 18
                                                 implicitWidth: statusText.contentWidth + 10
                                                 radius: 3
-                                                color: prof.status === "VALIDATED" ? "#14532d" : "#334155"
+                                                color: prof.status === "VALIDATED" ? "#0C2618" : "#2A2A34"
                                                 Text {
                                                     id: statusText
                                                     anchors.centerIn: parent
                                                     text: prof.status
-                                                    color: prof.status === "VALIDATED" ? "#4ade80" : "#94a3b8"
+                                                    color: prof.status === "VALIDATED" ? "#34D399" : "#A1A1AA"
                                                     font.pixelSize: 9
                                                     font.bold: true
                                                 }
@@ -2846,7 +2790,7 @@ ApplicationWindow {
 
                                         Text {
                                             text: prof.sensorType + "  ·  Serial: " + prof.serialNumber + "  ·  " + prof.transport
-                                            color: "#cbd5e1"
+                                            color: "#D4D4D8"
                                             font.pixelSize: 11
                                             elide: Text.ElideRight
                                             Layout.fillWidth: true
@@ -2862,14 +2806,14 @@ ApplicationWindow {
                                     width: 104
                                     height: 28
                                     radius: 4
-                                    color: isSelected ? "#14532d" : "#1e293b"
-                                    border.color: isSelected ? "#22c55e" : "#475569"
+                                    color: isSelected ? "#0C2618" : "#121217"
+                                    border.color: isSelected ? "#22c55e" : "#2A2A34"
                                     border.width: isSelected ? 1.5 : 1
 
                                     Text {
                                         anchors.centerIn: parent
                                         text: isSelected ? "✓ INCLUDED" : "○ EXCLUDED"
-                                        color: isSelected ? "#4ade80" : "#94a3b8"
+                                        color: isSelected ? "#34D399" : "#A1A1AA"
                                         font.pixelSize: 10
                                         font.bold: true
                                     }
@@ -2882,9 +2826,9 @@ ApplicationWindow {
                 Rectangle {
                     Layout.fillWidth: true
                     implicitHeight: 38
-                    color: "#1c1917"
+                    color: "#14110A"
                     radius: 6
-                    border.color: "#b45309"
+                    border.color: "#FBBF24"
                     RowLayout {
                         anchors.fill: parent
                         anchors.leftMargin: 12
@@ -2892,7 +2836,7 @@ ApplicationWindow {
                         spacing: 8
                         Text {
                             text: "📐 Spatial Notice: Extrinsics strictly UNKNOWN — Each sensor operates an independent SLAM pipeline with uncoupled coordinate frames."
-                            color: "#fbbf24"
+                            color: "#FBBF24"
                             font.pixelSize: 11
                             font.bold: true
                             Layout.fillWidth: true
@@ -2913,9 +2857,9 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     visible: configureSensorsDialog.isProfiling
-                    color: "#111827"
+                    color: "#0A0A0E"
                     radius: 10
-                    border.color: "#38bdf8"
+                    border.color: "#B89D64"
                     border.width: 1.5
 
                     ColumnLayout {
@@ -2925,7 +2869,7 @@ ApplicationWindow {
 
                         Text {
                             text: "⚡ Autonomous Hardware Interrogation & Capability Matching"
-                            color: "white"
+                            color: "#F4F4F6"
                             font.pixelSize: 16
                             font.bold: true
                             Layout.alignment: Qt.AlignHCenter
@@ -2933,7 +2877,7 @@ ApplicationWindow {
 
                         Text {
                             text: "Interrogating physical device registers, streaming capabilities, and matching SLAM backends..."
-                            color: "#94a3b8"
+                            color: "#A1A1AA"
                             font.pixelSize: 12
                             Layout.alignment: Qt.AlignHCenter
                         }
@@ -2942,21 +2886,21 @@ ApplicationWindow {
                         Rectangle {
                             Layout.fillWidth: true
                             implicitHeight: 14
-                            color: "#0f172a"
+                            color: "#0A0A0E"
                             radius: 7
-                            border.color: "#334155"
+                            border.color: "#2A2A34"
 
                             Rectangle {
                                 width: parent.width * (configureSensorsDialog.profilingProgress / 100.0)
                                 height: parent.height
                                 radius: 7
-                                color: "#38bdf8"
+                                color: "#9A804D"
                             }
                         }
 
                         Text {
                             text: configureSensorsDialog.profilingStep
-                            color: "#38bdf8"
+                            color: "#D4BE8D"
                             font.pixelSize: 14
                             font.bold: true
                             Layout.alignment: Qt.AlignHCenter
@@ -2969,7 +2913,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     visible: !configureSensorsDialog.isProfiling && configureSensorsDialog.profileResultVisible
-                    color: "#111827"
+                    color: "#0A0A0E"
                     radius: 10
                     border.color: "#22c55e"
                     border.width: 1.5
@@ -2984,7 +2928,7 @@ ApplicationWindow {
                             spacing: 10
                             Text {
                                 text: "✓ EXPERIMENTAL PROFILE GENERATED & REGISTERED"
-                                color: "#4ade80"
+                                color: "#34D399"
                                 font.pixelSize: 15
                                 font.bold: true
                             }
@@ -2993,12 +2937,12 @@ ApplicationWindow {
                                 implicitHeight: 22
                                 implicitWidth: 110
                                 radius: 4
-                                color: "#14532d"
+                                color: "#0C2618"
                                 border.color: "#22c55e"
                                 Text {
                                     anchors.centerIn: parent
                                     text: "EXPERIMENTAL"
-                                    color: "#4ade80"
+                                    color: "#34D399"
                                     font.pixelSize: 10
                                     font.bold: true
                                 }
@@ -3008,7 +2952,7 @@ ApplicationWindow {
                         Rectangle {
                             Layout.fillWidth: true
                             implicitHeight: 1
-                            color: "#334155"
+                            color: "#2A2A34"
                         }
 
                         // Detailed summary fields
@@ -3018,45 +2962,45 @@ ApplicationWindow {
                             rowSpacing: 10
                             columnSpacing: 20
 
-                            Text { text: "Device:"; color: "#94a3b8"; font.pixelSize: 12; font.bold: true }
-                            Text { text: configureSensorsDialog.profileResult.deviceName || ""; color: "white"; font.pixelSize: 12; font.bold: true }
+                            Text { text: "Device:"; color: "#A1A1AA"; font.pixelSize: 12; font.bold: true }
+                            Text { text: configureSensorsDialog.profileResult.deviceName || ""; color: "#F4F4F6"; font.pixelSize: 12; font.bold: true }
 
-                            Text { text: "Profile ID:"; color: "#94a3b8"; font.pixelSize: 12; font.bold: true }
-                            Text { text: configureSensorsDialog.profileResult.profileId || ""; color: "#38bdf8"; font.pixelSize: 12 }
+                            Text { text: "Profile ID:"; color: "#A1A1AA"; font.pixelSize: 12; font.bold: true }
+                            Text { text: configureSensorsDialog.profileResult.profileId || ""; color: "#D4BE8D"; font.pixelSize: 12 }
 
-                            Text { text: "Native Capabilities:"; color: "#94a3b8"; font.pixelSize: 12; font.bold: true }
-                            Text { text: configureSensorsDialog.profileResult.nativeCapabilities || "Unknown"; color: "white"; font.pixelSize: 12 }
+                            Text { text: "Native Capabilities:"; color: "#A1A1AA"; font.pixelSize: 12; font.bold: true }
+                            Text { text: configureSensorsDialog.profileResult.nativeCapabilities || "Unknown"; color: "#F4F4F6"; font.pixelSize: 12 }
 
-                            Text { text: "Native Depth:"; color: "#94a3b8"; font.pixelSize: 12; font.bold: true }
-                            Text { text: (configureSensorsDialog.profileResult.nativeDepth ? "YES" : "NO"); color: configureSensorsDialog.profileResult.nativeDepth ? "#4ade80" : "#f87171"; font.pixelSize: 12; font.bold: true }
+                            Text { text: "Native Depth:"; color: "#A1A1AA"; font.pixelSize: 12; font.bold: true }
+                            Text { text: (configureSensorsDialog.profileResult.nativeDepth ? "YES" : "NO"); color: configureSensorsDialog.profileResult.nativeDepth ? "#34D399" : "#DC2626"; font.pixelSize: 12; font.bold: true }
 
-                            Text { text: "Native IMU:"; color: "#94a3b8"; font.pixelSize: 12; font.bold: true }
-                            Text { text: (configureSensorsDialog.profileResult.nativeImu ? "YES" : "NO"); color: configureSensorsDialog.profileResult.nativeImu ? "#4ade80" : "#f87171"; font.pixelSize: 12; font.bold: true }
+                            Text { text: "Native IMU:"; color: "#A1A1AA"; font.pixelSize: 12; font.bold: true }
+                            Text { text: (configureSensorsDialog.profileResult.nativeImu ? "YES" : "NO"); color: configureSensorsDialog.profileResult.nativeImu ? "#34D399" : "#DC2626"; font.pixelSize: 12; font.bold: true }
 
-                            Text { text: "Native Geometry:"; color: "#94a3b8"; font.pixelSize: 12; font.bold: true }
-                            Text { text: (configureSensorsDialog.profileResult.nativeGeometry ? "YES" : "NO"); color: configureSensorsDialog.profileResult.nativeGeometry ? "#4ade80" : "#f87171"; font.pixelSize: 12; font.bold: true }
+                            Text { text: "Native Geometry:"; color: "#A1A1AA"; font.pixelSize: 12; font.bold: true }
+                            Text { text: (configureSensorsDialog.profileResult.nativeGeometry ? "YES" : "NO"); color: configureSensorsDialog.profileResult.nativeGeometry ? "#34D399" : "#DC2626"; font.pixelSize: 12; font.bold: true }
 
-                            Text { text: "Compatible Reconstruction:"; color: "#94a3b8"; font.pixelSize: 12; font.bold: true }
-                            Text { text: configureSensorsDialog.profileResult.compatibleReconstruction || "UNKNOWN"; color: "#38bdf8"; font.pixelSize: 12; font.bold: true }
+                            Text { text: "Compatible Reconstruction:"; color: "#A1A1AA"; font.pixelSize: 12; font.bold: true }
+                            Text { text: configureSensorsDialog.profileResult.compatibleReconstruction || "UNKNOWN"; color: "#D4BE8D"; font.pixelSize: 12; font.bold: true }
 
-                            Text { text: "Selected Backend:"; color: "#94a3b8"; font.pixelSize: 12; font.bold: true }
-                            Text { text: configureSensorsDialog.profileResult.selectedBackend || "NONE"; color: "#a855f7"; font.pixelSize: 12; font.bold: true }
+                            Text { text: "Selected Backend:"; color: "#A1A1AA"; font.pixelSize: 12; font.bold: true }
+                            Text { text: configureSensorsDialog.profileResult.selectedBackend || "NONE"; color: "#B89D64"; font.pixelSize: 12; font.bold: true }
 
-                            Text { text: "Geometry:"; color: "#94a3b8"; font.pixelSize: 12; font.bold: true }
-                            Text { text: configureSensorsDialog.profileResult.geometrySource || "NONE"; color: "white"; font.pixelSize: 12 }
+                            Text { text: "Geometry:"; color: "#A1A1AA"; font.pixelSize: 12; font.bold: true }
+                            Text { text: configureSensorsDialog.profileResult.geometrySource || "NONE"; color: "#F4F4F6"; font.pixelSize: 12 }
 
-                            Text { text: "Scale Status:"; color: "#94a3b8"; font.pixelSize: 12; font.bold: true }
+                            Text { text: "Scale Status:"; color: "#A1A1AA"; font.pixelSize: 12; font.bold: true }
                             Rectangle {
                                 implicitHeight: 22
                                 implicitWidth: scaleSummText.contentWidth + 14
                                 radius: 4
-                                color: (configureSensorsDialog.profileResult.scaleStatus && (configureSensorsDialog.profileResult.scaleStatus.indexOf("NO_RECONSTRUCTION") !== -1 || configureSensorsDialog.profileResult.scaleStatus.indexOf("NONE") !== -1)) ? "#1e293b" : "#451a03"
-                                border.color: (configureSensorsDialog.profileResult.scaleStatus && (configureSensorsDialog.profileResult.scaleStatus.indexOf("NO_RECONSTRUCTION") !== -1 || configureSensorsDialog.profileResult.scaleStatus.indexOf("NONE") !== -1)) ? "#475569" : "#f59e0b"
+                                color: (configureSensorsDialog.profileResult.scaleStatus && (configureSensorsDialog.profileResult.scaleStatus.indexOf("NO_RECONSTRUCTION") !== -1 || configureSensorsDialog.profileResult.scaleStatus.indexOf("NONE") !== -1)) ? "#121217" : "#1C1406"
+                                border.color: (configureSensorsDialog.profileResult.scaleStatus && (configureSensorsDialog.profileResult.scaleStatus.indexOf("NO_RECONSTRUCTION") !== -1 || configureSensorsDialog.profileResult.scaleStatus.indexOf("NONE") !== -1)) ? "#2A2A34" : "#f59e0b"
                                 Text {
                                     id: scaleSummText
                                     anchors.centerIn: parent
                                     text: configureSensorsDialog.profileResult.scaleStatus || "NO_RECONSTRUCTION_BACKEND_MATCHED"
-                                    color: (configureSensorsDialog.profileResult.scaleStatus && (configureSensorsDialog.profileResult.scaleStatus.indexOf("NO_RECONSTRUCTION") !== -1 || configureSensorsDialog.profileResult.scaleStatus.indexOf("NONE") !== -1)) ? "#94a3b8" : "#fbbf24"
+                                    color: (configureSensorsDialog.profileResult.scaleStatus && (configureSensorsDialog.profileResult.scaleStatus.indexOf("NO_RECONSTRUCTION") !== -1 || configureSensorsDialog.profileResult.scaleStatus.indexOf("NONE") !== -1)) ? "#A1A1AA" : "#FBBF24"
                                     font.pixelSize: 10
                                     font.bold: true
                                 }
@@ -3076,16 +3020,16 @@ ApplicationWindow {
                                 onClicked: configureSensorsDialog.profileResultVisible = false
                                 contentItem: Text {
                                     text: parent.text
-                                    color: "#cbd5e1"
+                                    color: "#D4D4D8"
                                     font.pixelSize: 12
                                     font.bold: true
                                     horizontalAlignment: Text.AlignHCenter
                                     verticalAlignment: Text.AlignVCenter
                                 }
                                 background: Rectangle {
-                                    color: parent.hovered ? "#334155" : "#1e293b"
+                                    color: parent.hovered ? "#2A2A34" : "#121217"
                                     radius: 6
-                                    border.color: "#475569"
+                                    border.color: "#2A2A34"
                                 }
                             }
 
@@ -3110,9 +3054,9 @@ ApplicationWindow {
                                     verticalAlignment: Text.AlignVCenter
                                 }
                                 background: Rectangle {
-                                    color: parent.isCapturableBackend ? (parent.hovered ? "#15803d" : "#16a34a") : (parent.hovered ? "#334155" : "#1e293b")
+                                    color: parent.isCapturableBackend ? (parent.hovered ? "#4ADE80" : "#16a34a") : (parent.hovered ? "#2A2A34" : "#121217")
                                     radius: 6
-                                    border.color: parent.isCapturableBackend ? "#22c55e" : "#475569"
+                                    border.color: parent.isCapturableBackend ? "#22c55e" : "#2A2A34"
                                 }
                             }
                         }
@@ -3132,13 +3076,13 @@ ApplicationWindow {
                             spacing: 3
                             Text {
                                 text: "Discovered Physical Sensors"
-                                color: "#f8fafc"
+                                color: "#F4F4F6"
                                 font.pixelSize: 14
                                 font.bold: true
                             }
                             Text {
                                 text: bridge.discoveryStatusText
-                                color: "#38bdf8"
+                                color: "#D4BE8D"
                                 font.pixelSize: 11
                             }
                         }
@@ -3152,16 +3096,16 @@ ApplicationWindow {
                             onClicked: bridge.refreshDiscovery()
                             contentItem: Text {
                                 text: scanInterfaceBtn.text
-                                color: scanInterfaceBtn.enabled ? "#38bdf8" : "#64748b"
+                                color: scanInterfaceBtn.enabled ? "#D4BE8D" : "#8E8E99"
                                 font.pixelSize: 11
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
                             }
                             background: Rectangle {
-                                color: scanInterfaceBtn.hovered && scanInterfaceBtn.enabled ? "#1e293b" : "#0f172a"
+                                color: scanInterfaceBtn.hovered && scanInterfaceBtn.enabled ? "#121217" : "#0A0A0E"
                                 radius: 6
-                                border.color: scanInterfaceBtn.enabled ? "#38bdf8" : "#334155"
+                                border.color: scanInterfaceBtn.enabled ? "#B89D64" : "#2A2A34"
                             }
                         }
 
@@ -3193,9 +3137,9 @@ ApplicationWindow {
                                 verticalAlignment: Text.AlignVCenter
                             }
                             background: Rectangle {
-                                color: parent.hovered ? "#0284c7" : "#0369a1"
+                                color: parent.hovered ? "#B89D64" : "#9A804D"
                                 radius: 6
-                                border.color: "#38bdf8"
+                                border.color: "#B89D64"
                             }
                         }
                     }
@@ -3206,20 +3150,20 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         implicitHeight: 80
                         radius: 8
-                        color: "#111827"
-                        border.color: "#334155"
+                        color: "#0A0A0E"
+                        border.color: "#2A2A34"
                         ColumnLayout {
                             anchors.centerIn: parent
                             spacing: 4
                             Text {
                                 text: "No hardware sensors currently detected."
-                                color: "#94a3b8"
+                                color: "#A1A1AA"
                                 font.pixelSize: 12
                                 horizontalAlignment: Text.AlignHCenter
                             }
                             Text {
                                 text: "Connect your camera or sensor via USB/Ethernet and click 'Scan Interfaces'."
-                                color: "#64748b"
+                                color: "#8E8E99"
                                 font.pixelSize: 11
                                 horizontalAlignment: Text.AlignHCenter
                             }
@@ -3249,8 +3193,8 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     implicitHeight: cardInnerCol.implicitHeight + 24
                                     radius: 8
-                                    color: isDisconnected ? "#0b0f17" : "#111827"
-                                    border.color: isUnprofiled ? "#b45309" : (isProfiled ? "#166534" : (isUnsupported ? "#6b21a8" : "#334155"))
+                                    color: isDisconnected ? "#0A0A0E" : "#0A0A0E"
+                                    border.color: isUnprofiled ? "#FBBF24" : (isProfiled ? "#34D399" : (isUnsupported ? "#B89D64" : "#2A2A34"))
                                     border.width: isUnprofiled ? 1.5 : 1
 
                                     Component.onCompleted: {
@@ -3283,7 +3227,7 @@ ApplicationWindow {
                                                     spacing: 8
                                                     Text {
                                                         text: dev.name
-                                                        color: isDisconnected ? "#94a3b8" : "#f8fafc"
+                                                        color: isDisconnected ? "#A1A1AA" : "#F4F4F6"
                                                         font.pixelSize: 13
                                                         font.bold: true
                                                     }
@@ -3293,13 +3237,13 @@ ApplicationWindow {
                                                         implicitHeight: 20
                                                         implicitWidth: badgeText.contentWidth + 12
                                                         radius: 4
-                                                        color: isUnprofiled ? "#78350f" : (isProfiled ? "#14532d" : (isUnsupported ? "#581c87" : "#1e293b"))
-                                                        border.color: isUnprofiled ? "#fbbf24" : (isProfiled ? "#22c55e" : (isUnsupported ? "#a855f7" : "#64748b"))
+                                                        color: isUnprofiled ? "#1C1406" : (isProfiled ? "#0C2618" : (isUnsupported ? "#1F1A10" : "#121217"))
+                                                        border.color: isUnprofiled ? "#FBBF24" : (isProfiled ? "#22c55e" : (isUnsupported ? "#B89D64" : "#8E8E99"))
                                                         Text {
                                                             id: badgeText
                                                             anchors.centerIn: parent
                                                             text: isUnprofiled ? "⚠️ UNPROFILED" : (isProfiled ? "✓ PROFILED" : (isUnsupported ? "🚫 UNSUPPORTED" : "🔌 DISCONNECTED"))
-                                                            color: isUnprofiled ? "#fbbf24" : (isProfiled ? "#4ade80" : (isUnsupported ? "#d8b4fe" : "#94a3b8"))
+                                                            color: isUnprofiled ? "#FBBF24" : (isProfiled ? "#34D399" : (isUnsupported ? "#D4BE8D" : "#A1A1AA"))
                                                             font.pixelSize: 9
                                                             font.bold: true
                                                         }
@@ -3308,7 +3252,7 @@ ApplicationWindow {
                                                     Text {
                                                         visible: isProfiled && dev.existingProfileId !== ""
                                                         text: "Profile: " + dev.existingProfileId
-                                                        color: "#38bdf8"
+                                                        color: "#D4BE8D"
                                                         font.pixelSize: 11
                                                     }
                                                 }
@@ -3320,7 +3264,7 @@ ApplicationWindow {
                                                           (dev.vendorId ? ("  ·  USB ID: " + dev.vendorId + ":" + dev.productId) : "") +
                                                           (dev.serial && dev.serial !== "N/A" ? ("  ·  SN: " + dev.serial) : "") +
                                                           "  ·  Driver: " + dev.driver
-                                                    color: "#94a3b8"
+                                                    color: "#A1A1AA"
                                                     font.pixelSize: 11
                                                     elide: Text.ElideRight
                                                     Layout.fillWidth: true
@@ -3343,9 +3287,9 @@ ApplicationWindow {
                                                     verticalAlignment: Text.AlignVCenter
                                                 }
                                                 background: Rectangle {
-                                                    color: parent.hovered ? "#0284c7" : "#0369a1"
+                                                    color: parent.hovered ? "#B89D64" : "#9A804D"
                                                     radius: 6
-                                                    border.color: "#38bdf8"
+                                                    border.color: "#B89D64"
                                                 }
                                             }
 
@@ -3357,16 +3301,16 @@ ApplicationWindow {
                                                 onClicked: configureSensorsDialog.startProfiling(dev.id)
                                                 contentItem: Text {
                                                     text: parent.text
-                                                    color: "#38bdf8"
+                                                    color: "#D4BE8D"
                                                     font.pixelSize: 11
                                                     font.bold: true
                                                     horizontalAlignment: Text.AlignHCenter
                                                     verticalAlignment: Text.AlignVCenter
                                                 }
                                                 background: Rectangle {
-                                                    color: parent.hovered ? "#0c4a6e" : "#082f49"
+                                                    color: parent.hovered ? "#1F1A10" : "#14110A"
                                                     radius: 6
-                                                    border.color: "#0284c7"
+                                                    border.color: "#B89D64"
                                                 }
                                             }
 
@@ -3375,12 +3319,12 @@ ApplicationWindow {
                                                 implicitWidth: 110
                                                 implicitHeight: 28
                                                 radius: 4
-                                                color: "#0f172a"
-                                                border.color: "#166534"
+                                                color: "#0A0A0E"
+                                                border.color: "#34D399"
                                                 Text {
                                                     anchors.centerIn: parent
                                                     text: "Ready for Capture"
-                                                    color: "#4ade80"
+                                                    color: "#34D399"
                                                     font.pixelSize: 10
                                                     font.bold: true
                                                 }
@@ -3391,12 +3335,12 @@ ApplicationWindow {
                                                 implicitWidth: 240
                                                 implicitHeight: 28
                                                 radius: 4
-                                                color: "#1e293b"
-                                                border.color: "#475569"
+                                                color: "#121217"
+                                                border.color: "#2A2A34"
                                                 Text {
                                                     anchors.centerIn: parent
                                                     text: "Not currently available for spatial capture"
-                                                    color: "#94a3b8"
+                                                    color: "#A1A1AA"
                                                     font.pixelSize: 10
                                                     font.bold: true
                                                 }
@@ -3407,12 +3351,12 @@ ApplicationWindow {
                                                 implicitWidth: 100
                                                 implicitHeight: 28
                                                 radius: 4
-                                                color: "#0f172a"
-                                                border.color: "#334155"
+                                                color: "#0A0A0E"
+                                                border.color: "#2A2A34"
                                                 Text {
                                                     anchors.centerIn: parent
                                                     text: "Device Offline"
-                                                    color: "#64748b"
+                                                    color: "#8E8E99"
                                                     font.pixelSize: 10
                                                 }
                                             }
@@ -3422,12 +3366,12 @@ ApplicationWindow {
                                                 implicitWidth: 130
                                                 implicitHeight: 28
                                                 radius: 4
-                                                color: "#1e102e"
-                                                border.color: "#6b21a8"
+                                                color: "#14110A"
+                                                border.color: "#B89D64"
                                                 Text {
                                                     anchors.centerIn: parent
                                                     text: "No Compatible Backend"
-                                                    color: "#d8b4fe"
+                                                    color: "#D4BE8D"
                                                     font.pixelSize: 10
                                                 }
                                             }
@@ -3441,7 +3385,7 @@ ApplicationWindow {
 
                                             Text {
                                                 text: "Physical Interfaces (" + (dev.interfaces ? dev.interfaces.length : 0) + "):"
-                                                color: "#64748b"
+                                                color: "#8E8E99"
                                                 font.pixelSize: 10
                                                 font.bold: true
                                             }
@@ -3452,13 +3396,13 @@ ApplicationWindow {
                                                     implicitHeight: 20
                                                     implicitWidth: subIfaceText.contentWidth + 12
                                                     radius: 3
-                                                    color: modelData.isPrimary ? "#1e293b" : "#0f172a"
-                                                    border.color: modelData.isPrimary ? "#38bdf8" : "#334155"
+                                                    color: modelData.isPrimary ? "#121217" : "#0A0A0E"
+                                                    border.color: modelData.isPrimary ? "#B89D64" : "#2A2A34"
                                                     Text {
                                                         id: subIfaceText
                                                         anchors.centerIn: parent
                                                         text: modelData.node + " [" + modelData.type + (modelData.isPrimary ? " - Primary" : "") + "]"
-                                                        color: modelData.isPrimary ? "#e2e8f0" : "#94a3b8"
+                                                        color: modelData.isPrimary ? "#F4F4F6" : "#A1A1AA"
                                                         font.pixelSize: 9
                                                         font.bold: modelData.isPrimary
                                                     }
@@ -3474,20 +3418,20 @@ ApplicationWindow {
 
                                             Text {
                                                 text: "Native Caps: " + (dev.nativeCapsDisplay || "Standard Video")
-                                                color: "#cbd5e1"
+                                                color: "#D4D4D8"
                                                 font.pixelSize: 10
                                                 elide: Text.ElideRight
                                             }
 
                                             Text {
                                                 text: "·"
-                                                color: "#475569"
+                                                color: "#2A2A34"
                                                 font.pixelSize: 10
                                             }
 
                                             Text {
                                                 text: "SLAM Pipeline: " + (dev.compatibleReconstruction || "None") + " (" + (dev.recommendedBackend || "N/A") + ")"
-                                                color: "#38bdf8"
+                                                color: "#D4BE8D"
                                                 font.pixelSize: 10
                                                 elide: Text.ElideRight
                                             }
@@ -3514,8 +3458,8 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     height: 52
                     radius: 8
-                    color: "#0f172a"
-                    border.color: "#1e293b"
+                    color: "#0A0A0E"
+                    border.color: "#121217"
 
                     RowLayout {
                         anchors.fill: parent
@@ -3532,8 +3476,8 @@ ApplicationWindow {
                             id: catalogSearchInput
                             Layout.fillWidth: true
                             placeholderText: "Search 106 models, 16 manufacturers, SDKs (e.g. SICK multiScan, Livox Mid-360L, Ouster Rev8, Pandar)..."
-                            placeholderTextColor: "#64748b"
-                            color: "white"
+                            placeholderTextColor: "#8E8E99"
+                            color: "#F4F4F6"
                             font.pixelSize: 12
                             background: Rectangle {
                                 color: "transparent"
@@ -3556,13 +3500,13 @@ ApplicationWindow {
                             }
                             contentItem: Text {
                                 text: parent.text
-                                color: "#94a3b8"
+                                color: "#A1A1AA"
                                 font.pixelSize: 10
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
                             }
                             background: Rectangle {
-                                color: parent.hovered ? "#334155" : "#1e293b"
+                                color: parent.hovered ? "#2A2A34" : "#121217"
                                 radius: 4
                             }
                         }
@@ -3570,7 +3514,7 @@ ApplicationWindow {
                         Rectangle {
                             height: 24
                             width: 1
-                            color: "#334155"
+                            color: "#2A2A34"
                         }
 
                         // Total Statistics Badge
@@ -3578,13 +3522,13 @@ ApplicationWindow {
                             implicitHeight: 28
                             implicitWidth: catalogStatsText.contentWidth + 16
                             radius: 14
-                            color: "#1e293b"
-                            border.color: "#38bdf8"
+                            color: "#121217"
+                            border.color: "#B89D64"
                             Text {
                                 id: catalogStatsText
                                 anchors.centerIn: parent
                                 text: configureSensorsDialog.catalogModels.length + " Models Shown · 16 Real Manufacturers"
-                                color: "#38bdf8"
+                                color: "#D4BE8D"
                                 font.pixelSize: 11
                                 font.bold: true
                             }
@@ -3598,7 +3542,7 @@ ApplicationWindow {
                     height: 36
                     radius: 6
                     visible: configureSensorsDialog.catalogNotification !== ""
-                    color: configureSensorsDialog.catalogNotificationSuccess ? "#064e3b" : "#7f1d1d"
+                    color: configureSensorsDialog.catalogNotificationSuccess ? "#07170F" : "#280D10"
                     border.color: configureSensorsDialog.catalogNotificationSuccess ? "#10b981" : "#ef4444"
 
                     RowLayout {
@@ -3609,7 +3553,7 @@ ApplicationWindow {
 
                         Text {
                             text: configureSensorsDialog.catalogNotificationSuccess ? "✓" : "⚠"
-                            color: configureSensorsDialog.catalogNotificationSuccess ? "#34d399" : "#f87171"
+                            color: configureSensorsDialog.catalogNotificationSuccess ? "#34D399" : "#DC2626"
                             font.bold: true
                             font.pixelSize: 14
                         }
@@ -3629,7 +3573,7 @@ ApplicationWindow {
                             Text {
                                 anchors.centerIn: parent
                                 text: "✕"
-                                color: "#94a3b8"
+                                color: "#A1A1AA"
                                 font.pixelSize: 12
                             }
                             onClicked: configureSensorsDialog.catalogNotification = ""
@@ -3650,8 +3594,8 @@ ApplicationWindow {
                         Layout.preferredWidth: 220
                         Layout.fillHeight: true
                         radius: 8
-                        color: "#0f172a"
-                        border.color: "#1e293b"
+                        color: "#0A0A0E"
+                        border.color: "#121217"
 
                         ColumnLayout {
                             anchors.fill: parent
@@ -3660,7 +3604,7 @@ ApplicationWindow {
 
                             Text {
                                 text: "MANUFACTURERS (16)"
-                                color: "#64748b"
+                                color: "#8E8E99"
                                 font.bold: true
                                 font.pixelSize: 10
                             }
@@ -3680,8 +3624,8 @@ ApplicationWindow {
                                         Layout.fillWidth: true
                                         height: 32
                                         radius: 4
-                                        color: configureSensorsDialog.catalogSelectedVendor === "All" ? "#0284c7" : (allVendMouse.containsMouse ? "#1e293b" : "transparent")
-                                        border.color: configureSensorsDialog.catalogSelectedVendor === "All" ? "#38bdf8" : "transparent"
+                                        color: configureSensorsDialog.catalogSelectedVendor === "All" ? "#B89D64" : (allVendMouse.containsMouse ? "#121217" : "transparent")
+                                        border.color: configureSensorsDialog.catalogSelectedVendor === "All" ? "#B89D64" : "transparent"
 
                                         RowLayout {
                                             anchors.fill: parent
@@ -3689,14 +3633,14 @@ ApplicationWindow {
                                             anchors.rightMargin: 8
                                             Text {
                                                 text: "🌐 All Ecosystems"
-                                                color: configureSensorsDialog.catalogSelectedVendor === "All" ? "white" : "#cbd5e1"
+                                                color: configureSensorsDialog.catalogSelectedVendor === "All" ? "white" : "#D4D4D8"
                                                 font.pixelSize: 11
                                                 font.bold: configureSensorsDialog.catalogSelectedVendor === "All"
                                                 Layout.fillWidth: true
                                             }
                                             Text {
                                                 text: "" + bridge.ecosystemModelCount
-                                                color: configureSensorsDialog.catalogSelectedVendor === "All" ? "#e0f2fe" : "#64748b"
+                                                color: configureSensorsDialog.catalogSelectedVendor === "All" ? "#F4F4F6" : "#8E8E99"
                                                 font.pixelSize: 10
                                             }
                                         }
@@ -3720,8 +3664,8 @@ ApplicationWindow {
                                             Layout.fillWidth: true
                                             height: 32
                                             radius: 4
-                                            color: configureSensorsDialog.catalogSelectedVendor === modelData ? "#0284c7" : (vendMouse.containsMouse ? "#1e293b" : "transparent")
-                                            border.color: configureSensorsDialog.catalogSelectedVendor === modelData ? "#38bdf8" : "transparent"
+                                            color: configureSensorsDialog.catalogSelectedVendor === modelData ? "#B89D64" : (vendMouse.containsMouse ? "#121217" : "transparent")
+                                            border.color: configureSensorsDialog.catalogSelectedVendor === modelData ? "#B89D64" : "transparent"
 
                                             RowLayout {
                                                 anchors.fill: parent
@@ -3730,7 +3674,7 @@ ApplicationWindow {
 
                                                 Text {
                                                     text: modelData
-                                                    color: configureSensorsDialog.catalogSelectedVendor === modelData ? "white" : "#cbd5e1"
+                                                    color: configureSensorsDialog.catalogSelectedVendor === modelData ? "white" : "#D4D4D8"
                                                     font.pixelSize: 11
                                                     font.bold: configureSensorsDialog.catalogSelectedVendor === modelData
                                                     Layout.fillWidth: true
@@ -3764,13 +3708,13 @@ ApplicationWindow {
                             Rectangle {
                                 Layout.fillWidth: true
                                 height: 1
-                                color: "#1e293b"
+                                color: "#121217"
                             }
 
                             // Sensor Type Filter
                             Text {
                                 text: "SENSOR TYPE"
-                                color: "#64748b"
+                                color: "#8E8E99"
                                 font.bold: true
                                 font.pixelSize: 10
                             }
@@ -3785,14 +3729,14 @@ ApplicationWindow {
                                         implicitHeight: 24
                                         implicitWidth: typeFilterText.contentWidth + 14
                                         radius: 12
-                                        color: configureSensorsDialog.catalogSelectedType === modelData ? "#0284c7" : (typeMouse.containsMouse ? "#334155" : "#1e293b")
-                                        border.color: configureSensorsDialog.catalogSelectedType === modelData ? "#38bdf8" : "#334155"
+                                        color: configureSensorsDialog.catalogSelectedType === modelData ? "#B89D64" : (typeMouse.containsMouse ? "#2A2A34" : "#121217")
+                                        border.color: configureSensorsDialog.catalogSelectedType === modelData ? "#B89D64" : "#2A2A34"
 
                                         Text {
                                             id: typeFilterText
                                             anchors.centerIn: parent
                                             text: modelData
-                                            color: configureSensorsDialog.catalogSelectedType === modelData ? "white" : "#94a3b8"
+                                            color: configureSensorsDialog.catalogSelectedType === modelData ? "white" : "#A1A1AA"
                                             font.pixelSize: 9
                                             font.bold: configureSensorsDialog.catalogSelectedType === modelData
                                         }
@@ -3820,8 +3764,8 @@ ApplicationWindow {
                         Layout.preferredWidth: 340
                         Layout.fillHeight: true
                         radius: 8
-                        color: "#0f172a"
-                        border.color: "#1e293b"
+                        color: "#0A0A0E"
+                        border.color: "#121217"
 
                         ColumnLayout {
                             anchors.fill: parent
@@ -3832,14 +3776,14 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 Text {
                                     text: "MODELS (" + configureSensorsDialog.catalogModels.length + ")"
-                                    color: "#64748b"
+                                    color: "#8E8E99"
                                     font.bold: true
                                     font.pixelSize: 10
                                     Layout.fillWidth: true
                                 }
                                 Text {
                                     text: configureSensorsDialog.catalogSelectedVendor
-                                    color: "#38bdf8"
+                                    color: "#D4BE8D"
                                     font.bold: true
                                     font.pixelSize: 10
                                 }
@@ -3860,8 +3804,8 @@ ApplicationWindow {
                                         width: ListView.view.width
                                         height: 74
                                         radius: 6
-                                        color: configureSensorsDialog.catalogSelectedModelId === modelData.id ? "#1e293b" : (cardMouse.containsMouse ? "#141c2b" : "#0b1120")
-                                        border.color: configureSensorsDialog.catalogSelectedModelId === modelData.id ? "#38bdf8" : (cardMouse.containsMouse ? "#334155" : "#1e293b")
+                                        color: configureSensorsDialog.catalogSelectedModelId === modelData.id ? "#121217" : (cardMouse.containsMouse ? "#121217" : "#0A0A0E")
+                                        border.color: configureSensorsDialog.catalogSelectedModelId === modelData.id ? "#B89D64" : (cardMouse.containsMouse ? "#2A2A34" : "#121217")
                                         border.width: configureSensorsDialog.catalogSelectedModelId === modelData.id ? 1.5 : 1
 
                                         RowLayout {
@@ -3874,8 +3818,8 @@ ApplicationWindow {
                                                 implicitWidth: 38
                                                 implicitHeight: 38
                                                 radius: 19
-                                                color: modelData.typeColor ? modelData.typeColor + "22" : "#38bdf822"
-                                                border.color: modelData.typeColor ? modelData.typeColor : "#38bdf8"
+                                                color: modelData.typeColor ? modelData.typeColor + "22" : "#9A804D22"
+                                                border.color: modelData.typeColor ? modelData.typeColor : "#B89D64"
 
                                                 Text {
                                                     anchors.centerIn: parent
@@ -3893,7 +3837,7 @@ ApplicationWindow {
                                                     Layout.fillWidth: true
                                                     Text {
                                                         text: modelData.vendor + " " + modelData.model
-                                                        color: configureSensorsDialog.catalogSelectedModelId === modelData.id ? "#38bdf8" : "white"
+                                                        color: configureSensorsDialog.catalogSelectedModelId === modelData.id ? "#D4BE8D" : "white"
                                                         font.bold: true
                                                         font.pixelSize: 11
                                                         elide: Text.ElideRight
@@ -3903,7 +3847,7 @@ ApplicationWindow {
 
                                                 Text {
                                                     text: modelData.family + " · " + modelData.hardwareRevision
-                                                    color: "#94a3b8"
+                                                    color: "#A1A1AA"
                                                     font.pixelSize: 10
                                                     elide: Text.ElideRight
                                                 }
@@ -3917,13 +3861,13 @@ ApplicationWindow {
                                                         implicitHeight: 16
                                                         implicitWidth: statusText.contentWidth + 8
                                                         radius: 3
-                                                        color: modelData.productionStatus === "CURRENT" ? "#064e3b" : (modelData.productionStatus === "PREVIOUS" ? "#1e3a8a" : "#451a03")
-                                                        border.color: modelData.productionStatus === "CURRENT" ? "#10b981" : (modelData.productionStatus === "PREVIOUS" ? "#3b82f6" : "#f59e0b")
+                                                        color: modelData.productionStatus === "CURRENT" ? "#07170F" : (modelData.productionStatus === "PREVIOUS" ? "#14110A" : "#1C1406")
+                                                        border.color: modelData.productionStatus === "CURRENT" ? "#10b981" : (modelData.productionStatus === "PREVIOUS" ? "#B89D64" : "#f59e0b")
                                                         Text {
                                                             id: statusText
                                                             anchors.centerIn: parent
                                                             text: modelData.productionStatus
-                                                            color: modelData.productionStatus === "CURRENT" ? "#34d399" : (modelData.productionStatus === "PREVIOUS" ? "#93c5fd" : "#fbbf24")
+                                                            color: modelData.productionStatus === "CURRENT" ? "#34D399" : (modelData.productionStatus === "PREVIOUS" ? "#D4BE8D" : "#FBBF24")
                                                             font.pixelSize: 8
                                                             font.bold: true
                                                         }
@@ -3934,13 +3878,13 @@ ApplicationWindow {
                                                         implicitHeight: 16
                                                         implicitWidth: tierText.contentWidth + 8
                                                         radius: 3
-                                                        color: modelData.validationTier === "AV_VALIDATED" ? "#064e3b" : (modelData.validationTier === "PHYSICALLY_TESTED" ? "#083344" : "#1e1b4b")
-                                                        border.color: modelData.validationTier === "AV_VALIDATED" ? "#10b981" : (modelData.validationTier === "PHYSICALLY_TESTED" ? "#06b6d4" : "#6366f1")
+                                                        color: modelData.validationTier === "AV_VALIDATED" ? "#07170F" : (modelData.validationTier === "PHYSICALLY_TESTED" ? "#14110A" : "#14110A")
+                                                        border.color: modelData.validationTier === "AV_VALIDATED" ? "#10b981" : (modelData.validationTier === "PHYSICALLY_TESTED" ? "#B89D64" : "#B89D64")
                                                         Text {
                                                             id: tierText
                                                             anchors.centerIn: parent
                                                             text: modelData.validationTier
-                                                            color: modelData.validationTier === "AV_VALIDATED" ? "#34d399" : (modelData.validationTier === "PHYSICALLY_TESTED" ? "#67e8f9" : "#a5b4fc")
+                                                            color: modelData.validationTier === "AV_VALIDATED" ? "#34D399" : (modelData.validationTier === "PHYSICALLY_TESTED" ? "#D4BE8D" : "#D4BE8D")
                                                             font.pixelSize: 8
                                                         }
                                                     }
@@ -3950,13 +3894,13 @@ ApplicationWindow {
                                                         implicitHeight: 16
                                                         implicitWidth: trText.contentWidth + 8
                                                         radius: 3
-                                                        color: "#1e293b"
-                                                        border.color: "#475569"
+                                                        color: "#121217"
+                                                        border.color: "#2A2A34"
                                                         Text {
                                                             id: trText
                                                             anchors.centerIn: parent
                                                             text: modelData.transportType
-                                                            color: "#94a3b8"
+                                                            color: "#A1A1AA"
                                                             font.pixelSize: 8
                                                         }
                                                     }
@@ -3987,8 +3931,8 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         radius: 8
-                        color: "#0f172a"
-                        border.color: "#1e293b"
+                        color: "#0A0A0E"
+                        border.color: "#121217"
 
                         // Empty State if no model selected
                         Item {
@@ -4005,14 +3949,14 @@ ApplicationWindow {
                                 }
                                 Text {
                                     text: "Select a Sensor Model to View Specifications"
-                                    color: "#94a3b8"
+                                    color: "#A1A1AA"
                                     font.bold: true
                                     font.pixelSize: 13
                                     Layout.alignment: Qt.AlignHCenter
                                 }
                                 Text {
                                     text: "Explore manufacturer specifications, official drivers, 8-point runtime status,\nand seed experimental template profiles for offline project planning."
-                                    color: "#64748b"
+                                    color: "#8E8E99"
                                     font.pixelSize: 11
                                     horizontalAlignment: Text.AlignHCenter
                                     Layout.alignment: Qt.AlignHCenter
@@ -4042,14 +3986,14 @@ ApplicationWindow {
 
                                         Text {
                                             text: (configureSensorsDialog.catalogSelectedModelDetails.vendor || "") + " " + (configureSensorsDialog.catalogSelectedModelDetails.model || "")
-                                            color: "white"
+                                            color: "#F4F4F6"
                                             font.bold: true
                                             font.pixelSize: 16
                                         }
 
                                         Text {
                                             text: (configureSensorsDialog.catalogSelectedModelDetails.family || "") + " · Revision: " + (configureSensorsDialog.catalogSelectedModelDetails.hardwareRevision || "N/A") + " · Model ID: " + (configureSensorsDialog.catalogSelectedModelDetails.id || "")
-                                            color: "#94a3b8"
+                                            color: "#A1A1AA"
                                             font.pixelSize: 11
                                         }
                                     }
@@ -4068,9 +4012,9 @@ ApplicationWindow {
                                             verticalAlignment: Text.AlignVCenter
                                         }
                                         background: Rectangle {
-                                            color: parent.hovered ? "#0284c7" : "#0369a1"
+                                            color: parent.hovered ? "#B89D64" : "#9A804D"
                                             radius: 6
-                                            border.color: "#38bdf8"
+                                            border.color: "#B89D64"
                                         }
                                         onClicked: {
                                             var res = bridge.createTemplateProfileFromModel(configureSensorsDialog.catalogSelectedModelId);
@@ -4095,13 +4039,13 @@ ApplicationWindow {
                                         implicitHeight: 22
                                         implicitWidth: bdgType.contentWidth + 12
                                         radius: 4
-                                        color: "#1e293b"
-                                        border.color: "#38bdf8"
+                                        color: "#121217"
+                                        border.color: "#B89D64"
                                         Text {
                                             id: bdgType
                                             anchors.centerIn: parent
                                             text: "Type: " + (configureSensorsDialog.catalogSelectedModelDetails.sensorType || "")
-                                            color: "#38bdf8"
+                                            color: "#D4BE8D"
                                             font.pixelSize: 10
                                             font.bold: true
                                         }
@@ -4111,13 +4055,13 @@ ApplicationWindow {
                                         implicitHeight: 22
                                         implicitWidth: bdgStatus.contentWidth + 12
                                         radius: 4
-                                        color: configureSensorsDialog.catalogSelectedModelDetails.productionStatus === "CURRENT" ? "#064e3b" : "#451a03"
+                                        color: configureSensorsDialog.catalogSelectedModelDetails.productionStatus === "CURRENT" ? "#07170F" : "#1C1406"
                                         border.color: configureSensorsDialog.catalogSelectedModelDetails.productionStatus === "CURRENT" ? "#10b981" : "#f59e0b"
                                         Text {
                                             id: bdgStatus
                                             anchors.centerIn: parent
                                             text: "Lifecycle: " + (configureSensorsDialog.catalogSelectedModelDetails.productionStatus || "")
-                                            color: configureSensorsDialog.catalogSelectedModelDetails.productionStatus === "CURRENT" ? "#34d399" : "#fbbf24"
+                                            color: configureSensorsDialog.catalogSelectedModelDetails.productionStatus === "CURRENT" ? "#34D399" : "#FBBF24"
                                             font.pixelSize: 10
                                             font.bold: true
                                         }
@@ -4127,13 +4071,13 @@ ApplicationWindow {
                                         implicitHeight: 22
                                         implicitWidth: bdgVal.contentWidth + 12
                                         radius: 4
-                                        color: "#1e1b4b"
-                                        border.color: "#6366f1"
+                                        color: "#14110A"
+                                        border.color: "#B89D64"
                                         Text {
                                             id: bdgVal
                                             anchors.centerIn: parent
                                             text: "Tier: " + (configureSensorsDialog.catalogSelectedModelDetails.validationTier || "")
-                                            color: "#a5b4fc"
+                                            color: "#D4BE8D"
                                             font.pixelSize: 10
                                         }
                                     }
@@ -4142,13 +4086,13 @@ ApplicationWindow {
                                         implicitHeight: 22
                                         implicitWidth: bdgTrans.contentWidth + 12
                                         radius: 4
-                                        color: "#0f172a"
-                                        border.color: "#475569"
+                                        color: "#0A0A0E"
+                                        border.color: "#2A2A34"
                                         Text {
                                             id: bdgTrans
                                             anchors.centerIn: parent
                                             text: "Transport: " + (configureSensorsDialog.catalogSelectedModelDetails.transportType || "")
-                                            color: "#cbd5e1"
+                                            color: "#D4D4D8"
                                             font.pixelSize: 10
                                         }
                                     }
@@ -4157,13 +4101,13 @@ ApplicationWindow {
                                         implicitHeight: 22
                                         implicitWidth: bdgBackend.contentWidth + 12
                                         radius: 4
-                                        color: "#14532d"
+                                        color: "#0C2618"
                                         border.color: "#22c55e"
                                         Text {
                                             id: bdgBackend
                                             anchors.centerIn: parent
                                             text: "SLAM: " + (configureSensorsDialog.catalogSelectedModelDetails.recommendedSlamBackend || "FAST-LIO2")
-                                            color: "#86efac"
+                                            color: "#34D399"
                                             font.pixelSize: 10
                                             font.bold: true
                                         }
@@ -4177,8 +4121,8 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     height: 120
                                     radius: 6
-                                    color: "#161f30"
-                                    border.color: "#1e293b"
+                                    color: "#121217"
+                                    border.color: "#121217"
 
                                     ColumnLayout {
                                         anchors.fill: parent
@@ -4187,7 +4131,7 @@ ApplicationWindow {
 
                                         Text {
                                             text: "HARDWARE & NETWORK SPECIFICATIONS"
-                                            color: "#38bdf8"
+                                            color: "#D4BE8D"
                                             font.bold: true
                                             font.pixelSize: 10
                                         }
@@ -4200,17 +4144,17 @@ ApplicationWindow {
                                                 Text {
                                                     text: "Default Endpoint: " + (configureSensorsDialog.catalogSelectedModelDetails.defaultIp || "Dynamic / USB") + 
                                                           (configureSensorsDialog.catalogSelectedModelDetails.defaultPorts && configureSensorsDialog.catalogSelectedModelDetails.defaultPorts.length > 0 ? " : [" + configureSensorsDialog.catalogSelectedModelDetails.defaultPorts.join(", ") + "]" : "")
-                                                    color: "#e2e8f0"
+                                                    color: "#F4F4F6"
                                                     font.pixelSize: 11
                                                 }
                                                 Text {
                                                     text: "USB IDs: " + (configureSensorsDialog.catalogSelectedModelDetails.vendorIds && configureSensorsDialog.catalogSelectedModelDetails.vendorIds.length > 0 ? "VID: " + configureSensorsDialog.catalogSelectedModelDetails.vendorIds.join(", ") + " · PID: " + configureSensorsDialog.catalogSelectedModelDetails.productIds.join(", ") : "N/A (Network LiDAR)")
-                                                    color: "#94a3b8"
+                                                    color: "#A1A1AA"
                                                     font.pixelSize: 10
                                                 }
                                                 Text {
                                                     text: "Coordinate System: " + (configureSensorsDialog.catalogSelectedModelDetails.nativeCoordinateSystem || "FLU") + " (+X Forward, +Y Left, +Z Up)"
-                                                    color: "#94a3b8"
+                                                    color: "#A1A1AA"
                                                     font.pixelSize: 10
                                                 }
                                             }
@@ -4220,17 +4164,17 @@ ApplicationWindow {
                                                 spacing: 4
                                                 Text {
                                                     text: "Scan Rates: " + (configureSensorsDialog.catalogSelectedModelDetails.scanRates && configureSensorsDialog.catalogSelectedModelDetails.scanRates.length > 0 ? configureSensorsDialog.catalogSelectedModelDetails.scanRates.join(", ") + " Hz" : "30.0 Hz")
-                                                    color: "#e2e8f0"
+                                                    color: "#F4F4F6"
                                                     font.pixelSize: 11
                                                 }
                                                 Text {
                                                     text: "Return Modes: " + (configureSensorsDialog.catalogSelectedModelDetails.returnModes && configureSensorsDialog.catalogSelectedModelDetails.returnModes.length > 0 ? configureSensorsDialog.catalogSelectedModelDetails.returnModes.join(", ") : "Single / Strongest")
-                                                    color: "#94a3b8"
+                                                    color: "#A1A1AA"
                                                     font.pixelSize: 10
                                                 }
                                                 Text {
                                                     text: "Sync / PTP: " + (configureSensorsDialog.catalogSelectedModelDetails.hasPtp ? "PTP IEEE 1588v2 · " : "") + (configureSensorsDialog.catalogSelectedModelDetails.hasPps ? "PPS Sync" : "Host Timestamping")
-                                                    color: "#94a3b8"
+                                                    color: "#A1A1AA"
                                                     font.pixelSize: 10
                                                 }
                                             }
@@ -4245,8 +4189,8 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     height: 120
                                     radius: 6
-                                    color: "#161f30"
-                                    border.color: "#1e293b"
+                                    color: "#121217"
+                                    border.color: "#121217"
 
                                     ColumnLayout {
                                         anchors.fill: parent
@@ -4255,7 +4199,7 @@ ApplicationWindow {
 
                                         Text {
                                             text: "OFFICIAL VENDOR SDK & DOCUMENTATION PROVENANCE"
-                                            color: "#38bdf8"
+                                            color: "#D4BE8D"
                                             font.bold: true
                                             font.pixelSize: 10
                                         }
@@ -4267,17 +4211,17 @@ ApplicationWindow {
                                                 spacing: 4
                                                 Text {
                                                     text: "Official Driver: " + (configureSensorsDialog.catalogSelectedModelDetails.currentDriver || "Generic Driver") + " (SDK " + (configureSensorsDialog.catalogSelectedModelDetails.currentSdk || "1.0") + ")"
-                                                    color: "#e2e8f0"
+                                                    color: "#F4F4F6"
                                                     font.pixelSize: 11
                                                 }
                                                 Text {
                                                     text: "ROS / ROS 2: " + (configureSensorsDialog.catalogSelectedModelDetails.rosDriver || "ROS 2 Humble / Jazzy compatible")
-                                                    color: "#94a3b8"
+                                                    color: "#A1A1AA"
                                                     font.pixelSize: 10
                                                 }
                                                 Text {
                                                     text: "License / OS: " + (configureSensorsDialog.catalogSelectedModelDetails.license || "Proprietary") + " · " + (configureSensorsDialog.catalogSelectedModelDetails.supportedOs ? configureSensorsDialog.catalogSelectedModelDetails.supportedOs.join(", ") : "Linux, Windows")
-                                                    color: "#94a3b8"
+                                                    color: "#A1A1AA"
                                                     font.pixelSize: 10
                                                 }
                                             }
@@ -4287,19 +4231,19 @@ ApplicationWindow {
                                                 spacing: 4
                                                 Text {
                                                     text: "Manual: " + (configureSensorsDialog.catalogSelectedModelDetails.manualRef || "Manufacturer User Manual")
-                                                    color: "#e2e8f0"
+                                                    color: "#F4F4F6"
                                                     font.pixelSize: 11
                                                     elide: Text.ElideRight
                                                 }
                                                 Text {
                                                     text: "Verified Date: " + (configureSensorsDialog.catalogSelectedModelDetails.lastVerified || "2026-09")
-                                                    color: "#94a3b8"
+                                                    color: "#A1A1AA"
                                                     font.pixelSize: 10
                                                 }
                                                 // Clickable URL
                                                 Text {
                                                     text: "🔗 " + (configureSensorsDialog.catalogSelectedModelDetails.docUrl || "https://github.com")
-                                                    color: "#38bdf8"
+                                                    color: "#D4BE8D"
                                                     font.pixelSize: 10
                                                     font.underline: true
                                                     elide: Text.ElideRight
@@ -4325,8 +4269,8 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     height: 150
                                     radius: 6
-                                    color: "#161f30"
-                                    border.color: "#1e293b"
+                                    color: "#121217"
+                                    border.color: "#121217"
 
                                     ColumnLayout {
                                         anchors.fill: parent
@@ -4335,7 +4279,7 @@ ApplicationWindow {
 
                                         Text {
                                             text: "8-POINT RUNTIME INTEGRATION STATUS (A–H)"
-                                            color: "#38bdf8"
+                                            color: "#D4BE8D"
                                             font.bold: true
                                             font.pixelSize: 10
                                         }
@@ -4349,56 +4293,56 @@ ApplicationWindow {
                                             // A. Catalog Knowledge
                                             Text {
                                                 text: "A. Catalog Knowledge:  ✓ Verified (" + (configureSensorsDialog.catalogSelectedModelDetails.sourceProvenance || "Official Specs") + ")"
-                                                color: "#34d399"
+                                                color: "#34D399"
                                                 font.pixelSize: 10
                                             }
 
                                             // B. Official SDK Identified
                                             Text {
                                                 text: "B. Official SDK Identified:  ✓ " + (configureSensorsDialog.catalogSelectedModelDetails.officialSdkId || configureSensorsDialog.catalogSelectedModelDetails.sdkFamily || "SDK Identified")
-                                                color: "#34d399"
+                                                color: "#34D399"
                                                 font.pixelSize: 10
                                             }
 
                                             // C. SDK Integrated in AV Scan
                                             Text {
                                                 text: "C. SDK Driver Integrated:  " + (configureSensorsDialog.catalogSelectedModelDetails.sdkIntegrated ? "✓ Integrated" : "○ Driver Planned / Headless")
-                                                color: configureSensorsDialog.catalogSelectedModelDetails.sdkIntegrated ? "#34d399" : "#fbbf24"
+                                                color: configureSensorsDialog.catalogSelectedModelDetails.sdkIntegrated ? "#34D399" : "#FBBF24"
                                                 font.pixelSize: 10
                                             }
 
                                             // D. Hardware Interrogation
                                             Text {
                                                 text: "D. HW Interrogation:  " + (configureSensorsDialog.catalogSelectedModelDetails.hwInterrogated ? "✓ Live Interrogation Supported" : "○ Interrogation on Physical Attach")
-                                                color: configureSensorsDialog.catalogSelectedModelDetails.hwInterrogated ? "#34d399" : "#94a3b8"
+                                                color: configureSensorsDialog.catalogSelectedModelDetails.hwInterrogated ? "#34D399" : "#A1A1AA"
                                                 font.pixelSize: 10
                                             }
 
                                             // E. Runtime Streaming Adapter
                                             Text {
                                                 text: "E. Streaming Adapter:  " + (configureSensorsDialog.catalogSelectedModelDetails.adapterImplemented ? "✓ " + configureSensorsDialog.catalogSelectedModelDetails.runtimeAdapter : "○ " + (configureSensorsDialog.catalogSelectedModelDetails.runtimeAdapter || "Generic Adapter"))
-                                                color: configureSensorsDialog.catalogSelectedModelDetails.adapterImplemented ? "#34d399" : "#94a3b8"
+                                                color: configureSensorsDialog.catalogSelectedModelDetails.adapterImplemented ? "#34D399" : "#A1A1AA"
                                                 font.pixelSize: 10
                                             }
 
                                             // F. Compatible SLAM Backend
                                             Text {
                                                 text: "F. Compatible SLAM Backend:  ✓ " + (configureSensorsDialog.catalogSelectedModelDetails.recommendedSlamBackend || "FAST-LIO2 / RTAB-Map")
-                                                color: "#34d399"
+                                                color: "#34D399"
                                                 font.pixelSize: 10
                                             }
 
                                             // G. Physically Tested
                                             Text {
                                                 text: "G. Physical HW Tested:  " + (configureSensorsDialog.catalogSelectedModelDetails.physicallyTested ? "✓ Bench Validated" : "○ Unplugged (Pending Physical Rig)")
-                                                color: configureSensorsDialog.catalogSelectedModelDetails.physicallyTested ? "#34d399" : "#64748b"
+                                                color: configureSensorsDialog.catalogSelectedModelDetails.physicallyTested ? "#34D399" : "#8E8E99"
                                                 font.pixelSize: 10
                                             }
 
                                             // H. AV GUI Validated
                                             Text {
                                                 text: "H. AV GUI Live Validated:  " + (configureSensorsDialog.catalogSelectedModelDetails.guiValidated ? "✓ Live Validated" : "○ Ready for Rig Session")
-                                                color: configureSensorsDialog.catalogSelectedModelDetails.guiValidated ? "#34d399" : "#64748b"
+                                                color: configureSensorsDialog.catalogSelectedModelDetails.guiValidated ? "#34D399" : "#8E8E99"
                                                 font.pixelSize: 10
                                             }
                                         }
@@ -4410,8 +4354,8 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     height: 54
                                     radius: 6
-                                    color: "#0f172a"
-                                    border.color: "#334155"
+                                    color: "#0A0A0E"
+                                    border.color: "#2A2A34"
 
                                     RowLayout {
                                         anchors.fill: parent
@@ -4426,7 +4370,7 @@ ApplicationWindow {
                                         Text {
                                             Layout.fillWidth: true
                                             text: "Model Definitions are authoritative catalog specifications. Seeding a Template Profile creates an experimental configuration for offline project planning. Physical sensor calibration is verified automatically upon hardware connection."
-                                            color: "#94a3b8"
+                                            color: "#A1A1AA"
                                             font.pixelSize: 10
                                             wrapMode: Text.WordWrap
                                         }
@@ -4440,14 +4384,14 @@ ApplicationWindow {
 
         footer: Rectangle {
             height: 64
-            color: "#121720"
+            color: "#0A0A0E"
             radius: 12
             Rectangle {
                 anchors.top: parent.top
                 anchors.left: parent.left
                 anchors.right: parent.right
                 height: 1
-                color: "#28303e"
+                color: "#1F1F26"
             }
             RowLayout {
                 anchors.fill: parent
@@ -4462,16 +4406,16 @@ ApplicationWindow {
                     onClicked: configureSensorsDialog.close()
                     contentItem: Text {
                         text: parent.text
-                        color: "#cbd5e1"
+                        color: "#D4D4D8"
                         font.pixelSize: 13
                         font.bold: true
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                     }
                     background: Rectangle {
-                        color: parent.hovered ? "#334155" : "#1e293b"
+                        color: parent.hovered ? "#2A2A34" : "#121217"
                         radius: 6
-                        border.color: "#475569"
+                        border.color: "#2A2A34"
                     }
                 }
 
@@ -4485,16 +4429,16 @@ ApplicationWindow {
                     onClicked: configureSensorsDialog.currentTab = 0
                     contentItem: Text {
                         text: parent.text
-                        color: "#38bdf8"
+                        color: "#D4BE8D"
                         font.pixelSize: 12
                         font.bold: true
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                     }
                     background: Rectangle {
-                        color: parent.hovered ? "#1e293b" : "#0f172a"
+                        color: parent.hovered ? "#121217" : "#0A0A0E"
                         radius: 6
-                        border.color: "#38bdf8"
+                        border.color: "#B89D64"
                     }
                 }
 
@@ -4523,16 +4467,16 @@ ApplicationWindow {
                     }
                     contentItem: Text {
                         text: parent.text
-                        color: parent.enabled ? "white" : "#64748b"
+                        color: parent.enabled ? "white" : "#8E8E99"
                         font.bold: true
                         font.pixelSize: 13
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                     }
                     background: Rectangle {
-                        color: parent.enabled ? (parent.hovered ? "#0284c7" : "#0369a1") : "#1e293b"
+                        color: parent.enabled ? (parent.hovered ? "#B89D64" : "#9A804D") : "#121217"
                         radius: 6
-                        border.color: parent.enabled ? "#38bdf8" : "#2d3748"
+                        border.color: parent.enabled ? "#B89D64" : "#1F1F26"
                     }
                 }
             }
@@ -4640,15 +4584,15 @@ ApplicationWindow {
         rightPadding: 20
 
         background: Rectangle {
-            color: "#151922"
+            color: "#0A0A0E"
             radius: 12
-            border.color: "#a855f7"
+            border.color: "#B89D64"
             border.width: 1.5
         }
 
         header: Rectangle {
             height: 58
-            color: "#1e1b4b"
+            color: "#14110A"
             radius: 12
 
             MouseArea {
@@ -4660,7 +4604,7 @@ ApplicationWindow {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 height: 1
-                color: "#3b0764"
+                color: "#1F1A10"
             }
 
             RowLayout {
@@ -4671,7 +4615,7 @@ ApplicationWindow {
 
                 Text {
                     text: "📐 Sensor Orientation & Canonical Transform Diagnostic"
-                    color: "#f3e8ff"
+                    color: "#F4F4F6"
                     font.pixelSize: 15
                     font.bold: true
                 }
@@ -4687,16 +4631,16 @@ ApplicationWindow {
                     }
                     contentItem: Text {
                         text: parent.text
-                        color: "#38bdf8"
+                        color: "#D4BE8D"
                         font.pixelSize: 11
                         font.bold: true
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                     }
                     background: Rectangle {
-                        color: parent.hovered ? "#0c4a6e" : "#0f172a"
+                        color: parent.hovered ? "#1F1A10" : "#0A0A0E"
                         radius: 4
-                        border.color: "#38bdf8"
+                        border.color: "#B89D64"
                     }
                 }
 
@@ -4704,7 +4648,7 @@ ApplicationWindow {
 
                 Text {
                     text: "✥ Drag header to move"
-                    color: "#94a3b8"
+                    color: "#A1A1AA"
                     font.pixelSize: 11
                 }
 
@@ -4718,14 +4662,14 @@ ApplicationWindow {
                     }
                     contentItem: Text {
                         text: parent.text
-                        color: "#e2e8f0"
+                        color: "#F4F4F6"
                         font.pixelSize: 14
                         font.bold: true
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                     }
                     background: Rectangle {
-                        color: parent.hovered ? "#dc2626" : "#334155"
+                        color: parent.hovered ? "#dc2626" : "#2A2A34"
                         radius: 6
                     }
                 }
@@ -4747,7 +4691,7 @@ ApplicationWindow {
 
                     Text {
                         text: "Active Sensor Backend:"
-                        color: "#94a3b8"
+                        color: "#A1A1AA"
                         font.pixelSize: 12
                         font.bold: true
                     }
@@ -4762,7 +4706,7 @@ ApplicationWindow {
                             anchors.centerIn: parent
                             Text {
                                 text: "RoboSense Airy"
-                                color: bridge.orientationDiagSensor === "AIRY" ? "#22c55e" : "#94a3b8"
+                                color: bridge.orientationDiagSensor === "AIRY" ? "#22c55e" : "#A1A1AA"
                                 font.bold: true
                                 font.pixelSize: 12
                             }
@@ -4770,21 +4714,21 @@ ApplicationWindow {
                                 width: 50
                                 height: 16
                                 radius: 8
-                                color: "#14532d"
+                                color: "#0C2618"
                                 border.color: "#22c55e"
                                 Text {
                                     anchors.centerIn: parent
                                     text: "LOCKED"
-                                    color: "#86efac"
+                                    color: "#34D399"
                                     font.pixelSize: 9
                                     font.bold: true
                                 }
                             }
                         }
                         background: Rectangle {
-                            color: bridge.orientationDiagSensor === "AIRY" ? "#052e16" : "#1e293b"
+                            color: bridge.orientationDiagSensor === "AIRY" ? "#07170F" : "#121217"
                             radius: 6
-                            border.color: bridge.orientationDiagSensor === "AIRY" ? "#22c55e" : "#334155"
+                            border.color: bridge.orientationDiagSensor === "AIRY" ? "#22c55e" : "#2A2A34"
                             border.width: bridge.orientationDiagSensor === "AIRY" ? 1.5 : 1
                         }
                     }
@@ -4799,7 +4743,7 @@ ApplicationWindow {
                             anchors.centerIn: parent
                             Text {
                                 text: "Orbbec Gemini 336L"
-                                color: bridge.orientationDiagSensor === "GEMINI" ? "#38bdf8" : "#94a3b8"
+                                color: bridge.orientationDiagSensor === "GEMINI" ? "#D4BE8D" : "#A1A1AA"
                                 font.bold: true
                                 font.pixelSize: 12
                             }
@@ -4807,21 +4751,21 @@ ApplicationWindow {
                                 width: 44
                                 height: 16
                                 radius: 8
-                                color: "#0c4a6e"
-                                border.color: "#38bdf8"
+                                color: "#1F1A10"
+                                border.color: "#B89D64"
                                 Text {
                                     anchors.centerIn: parent
                                     text: "RGBD"
-                                    color: "#7dd3fc"
+                                    color: "#D4BE8D"
                                     font.pixelSize: 9
                                     font.bold: true
                                 }
                             }
                         }
                         background: Rectangle {
-                            color: bridge.orientationDiagSensor === "GEMINI" ? "#082f49" : "#1e293b"
+                            color: bridge.orientationDiagSensor === "GEMINI" ? "#14110A" : "#121217"
                             radius: 6
-                            border.color: bridge.orientationDiagSensor === "GEMINI" ? "#38bdf8" : "#334155"
+                            border.color: bridge.orientationDiagSensor === "GEMINI" ? "#B89D64" : "#2A2A34"
                             border.width: bridge.orientationDiagSensor === "GEMINI" ? 1.5 : 1
                         }
                     }
@@ -4836,7 +4780,7 @@ ApplicationWindow {
                             anchors.centerIn: parent
                             Text {
                                 text: "VITURE Ultra"
-                                color: bridge.orientationDiagSensor === "VITURE" ? "#f59e0b" : "#94a3b8"
+                                color: bridge.orientationDiagSensor === "VITURE" ? "#f59e0b" : "#A1A1AA"
                                 font.bold: true
                                 font.pixelSize: 12
                             }
@@ -4844,21 +4788,21 @@ ApplicationWindow {
                                 width: 40
                                 height: 16
                                 radius: 8
-                                color: "#451a03"
+                                color: "#1C1406"
                                 border.color: "#f59e0b"
                                 Text {
                                     anchors.centerIn: parent
                                     text: "VIO"
-                                    color: "#fcd34d"
+                                    color: "#FBBF24"
                                     font.pixelSize: 9
                                     font.bold: true
                                 }
                             }
                         }
                         background: Rectangle {
-                            color: bridge.orientationDiagSensor === "VITURE" ? "#451a03" : "#1e293b"
+                            color: bridge.orientationDiagSensor === "VITURE" ? "#1C1406" : "#121217"
                             radius: 6
-                            border.color: bridge.orientationDiagSensor === "VITURE" ? "#f59e0b" : "#334155"
+                            border.color: bridge.orientationDiagSensor === "VITURE" ? "#f59e0b" : "#2A2A34"
                             border.width: bridge.orientationDiagSensor === "VITURE" ? 1.5 : 1
                         }
                     }
@@ -4871,7 +4815,7 @@ ApplicationWindow {
                     visible: bridge.orientationDiagIsFrozen
                     Layout.fillWidth: true
                     implicitHeight: 48
-                    color: "#052e16"
+                    color: "#07170F"
                     radius: 8
                     border.color: "#22c55e"
                     RowLayout {
@@ -4884,7 +4828,7 @@ ApplicationWindow {
                         }
                         Text {
                             text: "Airy LiDAR (FAST-LIVO2 ROS FLU) is physically validated and frozen as the Ground Truth Reference (+X Forward, +Y Left, +Z Up, Ground XY). Orientation controls are disabled."
-                            color: "#86efac"
+                            color: "#34D399"
                             font.pixelSize: 12
                             font.bold: true
                             Layout.fillWidth: true
@@ -4906,7 +4850,7 @@ ApplicationWindow {
 
                         Text {
                             text: "Presets:"
-                            color: "#94a3b8"
+                            color: "#A1A1AA"
                             font.pixelSize: 11
                             font.bold: true
                         }
@@ -4916,10 +4860,10 @@ ApplicationWindow {
                             implicitHeight: 28
                             onClicked: bridge.setOrientationDiagRotation(-90.0, 0.0, -90.0)
                             contentItem: Text {
-                                text: parent.text; color: "#e2e8f0"; font.pixelSize: 11; font.bold: true
+                                text: parent.text; color: "#F4F4F6"; font.pixelSize: 11; font.bold: true
                                 horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                             }
-                            background: Rectangle { color: parent.hovered ? "#334155" : "#1e293b"; radius: 4; border.color: "#475569" }
+                            background: Rectangle { color: parent.hovered ? "#2A2A34" : "#121217"; radius: 4; border.color: "#2A2A34" }
                         }
 
                         Button {
@@ -4927,10 +4871,10 @@ ApplicationWindow {
                             implicitHeight: 28
                             onClicked: bridge.resetOrientationDiagRotation()
                             contentItem: Text {
-                                text: parent.text; color: "#e2e8f0"; font.pixelSize: 11; font.bold: true
+                                text: parent.text; color: "#F4F4F6"; font.pixelSize: 11; font.bold: true
                                 horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                             }
-                            background: Rectangle { color: parent.hovered ? "#334155" : "#1e293b"; radius: 4; border.color: "#475569" }
+                            background: Rectangle { color: parent.hovered ? "#2A2A34" : "#121217"; radius: 4; border.color: "#2A2A34" }
                         }
 
                         Button {
@@ -4938,10 +4882,25 @@ ApplicationWindow {
                             implicitHeight: 28
                             onClicked: bridge.setOrientationDiagRotation(90.0, 0.0, 90.0)
                             contentItem: Text {
-                                text: parent.text; color: "#e2e8f0"; font.pixelSize: 11; font.bold: true
+                                text: parent.text; color: "#F4F4F6"; font.pixelSize: 11; font.bold: true
                                 horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                             }
-                            background: Rectangle { color: parent.hovered ? "#334155" : "#1e293b"; radius: 4; border.color: "#475569" }
+                            background: Rectangle { color: parent.hovered ? "#2A2A34" : "#121217"; radius: 4; border.color: "#2A2A34" }
+                        }
+
+                        Button {
+                            text: "🎯 Auto-Level Floor (RANSAC)"
+                            implicitHeight: 28
+                            onClicked: {
+                                bridge.autoLevelOrientationDiag()
+                                canvas3d.requestPaint()
+                                canvas2d.requestPaint()
+                            }
+                            contentItem: Text {
+                                text: parent.text; color: "#34D399"; font.pixelSize: 11; font.bold: true
+                                horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                            }
+                            background: Rectangle { color: parent.hovered ? "#0C2618" : "#07170F"; radius: 4; border.color: "#22c55e" }
                         }
 
                         Item { Layout.fillWidth: true }
@@ -4951,9 +4910,9 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true
                         implicitHeight: 82
-                        color: "#181e28"
+                        color: "#0A0A0E"
                         radius: 8
-                        border.color: "#28303e"
+                        border.color: "#1F1F26"
                         ColumnLayout {
                             anchors.fill: parent
                             anchors.margins: 10
@@ -4963,14 +4922,14 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 Text {
                                     text: "Roll (X-Axis Rotation) — Rotation around Physical Forward (+X)"
-                                    color: "#f87171"
+                                    color: "#DC2626"
                                     font.pixelSize: 12
                                     font.bold: true
                                 }
                                 Item { Layout.fillWidth: true }
                                 Text {
                                     text: bridge.orientationDiagRoll.toFixed(1) + "°"
-                                    color: "#f87171"
+                                    color: "#DC2626"
                                     font.pixelSize: 14
                                     font.bold: true
                                 }
@@ -4983,20 +4942,20 @@ ApplicationWindow {
                                 Button {
                                     text: "-90°"; implicitWidth: 44; implicitHeight: 26
                                     onClicked: bridge.stepOrientationDiagRotation("ROLL", -90.0)
-                                    contentItem: Text { text: parent.text; color: "#f87171"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#450a0a" : "#261315"; radius: 4; border.color: "#7f1d1d" }
+                                    contentItem: Text { text: parent.text; color: "#DC2626"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#1C090B" : "#1C090B"; radius: 4; border.color: "#280D10" }
                                 }
                                 Button {
                                     text: "-15°"; implicitWidth: 44; implicitHeight: 26
                                     onClicked: bridge.stepOrientationDiagRotation("ROLL", -15.0)
-                                    contentItem: Text { text: parent.text; color: "#f87171"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#450a0a" : "#261315"; radius: 4; border.color: "#7f1d1d" }
+                                    contentItem: Text { text: parent.text; color: "#DC2626"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#1C090B" : "#1C090B"; radius: 4; border.color: "#280D10" }
                                 }
                                 Button {
                                     text: "-1°"; implicitWidth: 38; implicitHeight: 26
                                     onClicked: bridge.stepOrientationDiagRotation("ROLL", -1.0)
-                                    contentItem: Text { text: parent.text; color: "#f87171"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#450a0a" : "#261315"; radius: 4; border.color: "#7f1d1d" }
+                                    contentItem: Text { text: parent.text; color: "#DC2626"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#1C090B" : "#1C090B"; radius: 4; border.color: "#280D10" }
                                 }
 
                                 Slider {
@@ -5013,7 +4972,7 @@ ApplicationWindow {
                                         width: rollSlider.availableWidth
                                         height: 6
                                         radius: 3
-                                        color: "#334155"
+                                        color: "#2A2A34"
                                     }
                                     handle: Rectangle {
                                         x: rollSlider.leftPadding + rollSlider.visualPosition * (rollSlider.availableWidth - width)
@@ -5021,7 +4980,7 @@ ApplicationWindow {
                                         implicitWidth: 18
                                         implicitHeight: 18
                                         radius: 9
-                                        color: rollSlider.pressed ? "#fca5a5" : "#f87171"
+                                        color: rollSlider.pressed ? "#B91C1C" : "#DC2626"
                                         border.color: "white"
                                         border.width: 1.5
                                     }
@@ -5030,20 +4989,20 @@ ApplicationWindow {
                                 Button {
                                     text: "+1°"; implicitWidth: 38; implicitHeight: 26
                                     onClicked: bridge.stepOrientationDiagRotation("ROLL", 1.0)
-                                    contentItem: Text { text: parent.text; color: "#f87171"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#450a0a" : "#261315"; radius: 4; border.color: "#7f1d1d" }
+                                    contentItem: Text { text: parent.text; color: "#DC2626"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#1C090B" : "#1C090B"; radius: 4; border.color: "#280D10" }
                                 }
                                 Button {
                                     text: "+15°"; implicitWidth: 44; implicitHeight: 26
                                     onClicked: bridge.stepOrientationDiagRotation("ROLL", 15.0)
-                                    contentItem: Text { text: parent.text; color: "#f87171"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#450a0a" : "#261315"; radius: 4; border.color: "#7f1d1d" }
+                                    contentItem: Text { text: parent.text; color: "#DC2626"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#1C090B" : "#1C090B"; radius: 4; border.color: "#280D10" }
                                 }
                                 Button {
                                     text: "+90°"; implicitWidth: 44; implicitHeight: 26
                                     onClicked: bridge.stepOrientationDiagRotation("ROLL", 90.0)
-                                    contentItem: Text { text: parent.text; color: "#f87171"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#450a0a" : "#261315"; radius: 4; border.color: "#7f1d1d" }
+                                    contentItem: Text { text: parent.text; color: "#DC2626"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#1C090B" : "#1C090B"; radius: 4; border.color: "#280D10" }
                                 }
                             }
                         }
@@ -5053,9 +5012,9 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true
                         implicitHeight: 82
-                        color: "#181e28"
+                        color: "#0A0A0E"
                         radius: 8
-                        border.color: "#28303e"
+                        border.color: "#1F1F26"
                         ColumnLayout {
                             anchors.fill: parent
                             anchors.margins: 10
@@ -5065,14 +5024,14 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 Text {
                                     text: "Pitch (Y-Axis Rotation) — Rotation around Physical Left (+Y)"
-                                    color: "#4ade80"
+                                    color: "#34D399"
                                     font.pixelSize: 12
                                     font.bold: true
                                 }
                                 Item { Layout.fillWidth: true }
                                 Text {
                                     text: bridge.orientationDiagPitch.toFixed(1) + "°"
-                                    color: "#4ade80"
+                                    color: "#34D399"
                                     font.pixelSize: 14
                                     font.bold: true
                                 }
@@ -5085,20 +5044,20 @@ ApplicationWindow {
                                 Button {
                                     text: "-90°"; implicitWidth: 44; implicitHeight: 26
                                     onClicked: bridge.stepOrientationDiagRotation("PITCH", -90.0)
-                                    contentItem: Text { text: parent.text; color: "#4ade80"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#052e16" : "#0d2818"; radius: 4; border.color: "#166534" }
+                                    contentItem: Text { text: parent.text; color: "#34D399"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#07170F" : "#07170F"; radius: 4; border.color: "#34D399" }
                                 }
                                 Button {
                                     text: "-15°"; implicitWidth: 44; implicitHeight: 26
                                     onClicked: bridge.stepOrientationDiagRotation("PITCH", -15.0)
-                                    contentItem: Text { text: parent.text; color: "#4ade80"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#052e16" : "#0d2818"; radius: 4; border.color: "#166534" }
+                                    contentItem: Text { text: parent.text; color: "#34D399"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#07170F" : "#07170F"; radius: 4; border.color: "#34D399" }
                                 }
                                 Button {
                                     text: "-1°"; implicitWidth: 38; implicitHeight: 26
                                     onClicked: bridge.stepOrientationDiagRotation("PITCH", -1.0)
-                                    contentItem: Text { text: parent.text; color: "#4ade80"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#052e16" : "#0d2818"; radius: 4; border.color: "#166534" }
+                                    contentItem: Text { text: parent.text; color: "#34D399"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#07170F" : "#07170F"; radius: 4; border.color: "#34D399" }
                                 }
 
                                 Slider {
@@ -5115,7 +5074,7 @@ ApplicationWindow {
                                         width: pitchSlider.availableWidth
                                         height: 6
                                         radius: 3
-                                        color: "#334155"
+                                        color: "#2A2A34"
                                     }
                                     handle: Rectangle {
                                         x: pitchSlider.leftPadding + pitchSlider.visualPosition * (pitchSlider.availableWidth - width)
@@ -5123,7 +5082,7 @@ ApplicationWindow {
                                         implicitWidth: 18
                                         implicitHeight: 18
                                         radius: 9
-                                        color: pitchSlider.pressed ? "#bbf7d0" : "#4ade80"
+                                        color: pitchSlider.pressed ? "#34D399" : "#059669"
                                         border.color: "white"
                                         border.width: 1.5
                                     }
@@ -5132,20 +5091,20 @@ ApplicationWindow {
                                 Button {
                                     text: "+1°"; implicitWidth: 38; implicitHeight: 26
                                     onClicked: bridge.stepOrientationDiagRotation("PITCH", 1.0)
-                                    contentItem: Text { text: parent.text; color: "#4ade80"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#052e16" : "#0d2818"; radius: 4; border.color: "#166534" }
+                                    contentItem: Text { text: parent.text; color: "#34D399"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#07170F" : "#07170F"; radius: 4; border.color: "#34D399" }
                                 }
                                 Button {
                                     text: "+15°"; implicitWidth: 44; implicitHeight: 26
                                     onClicked: bridge.stepOrientationDiagRotation("PITCH", 15.0)
-                                    contentItem: Text { text: parent.text; color: "#4ade80"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#052e16" : "#0d2818"; radius: 4; border.color: "#166534" }
+                                    contentItem: Text { text: parent.text; color: "#34D399"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#07170F" : "#07170F"; radius: 4; border.color: "#34D399" }
                                 }
                                 Button {
                                     text: "+90°"; implicitWidth: 44; implicitHeight: 26
                                     onClicked: bridge.stepOrientationDiagRotation("PITCH", 90.0)
-                                    contentItem: Text { text: parent.text; color: "#4ade80"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#052e16" : "#0d2818"; radius: 4; border.color: "#166534" }
+                                    contentItem: Text { text: parent.text; color: "#34D399"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#07170F" : "#07170F"; radius: 4; border.color: "#34D399" }
                                 }
                             }
                         }
@@ -5155,9 +5114,9 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true
                         implicitHeight: 82
-                        color: "#181e28"
+                        color: "#0A0A0E"
                         radius: 8
-                        border.color: "#28303e"
+                        border.color: "#1F1F26"
                         ColumnLayout {
                             anchors.fill: parent
                             anchors.margins: 10
@@ -5167,14 +5126,14 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 Text {
                                     text: "Yaw (Z-Axis Rotation) — Rotation around Physical Up (+Z)"
-                                    color: "#60a5fa"
+                                    color: "#D4BE8D"
                                     font.pixelSize: 12
                                     font.bold: true
                                 }
                                 Item { Layout.fillWidth: true }
                                 Text {
                                     text: bridge.orientationDiagYaw.toFixed(1) + "°"
-                                    color: "#60a5fa"
+                                    color: "#D4BE8D"
                                     font.pixelSize: 14
                                     font.bold: true
                                 }
@@ -5187,20 +5146,20 @@ ApplicationWindow {
                                 Button {
                                     text: "-90°"; implicitWidth: 44; implicitHeight: 26
                                     onClicked: bridge.stepOrientationDiagRotation("YAW", -90.0)
-                                    contentItem: Text { text: parent.text; color: "#60a5fa"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#082f49" : "#0c2135"; radius: 4; border.color: "#0369a1" }
+                                    contentItem: Text { text: parent.text; color: "#D4BE8D"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#14110A" : "#14110A"; radius: 4; border.color: "#9A804D" }
                                 }
                                 Button {
                                     text: "-15°"; implicitWidth: 44; implicitHeight: 26
                                     onClicked: bridge.stepOrientationDiagRotation("YAW", -15.0)
-                                    contentItem: Text { text: parent.text; color: "#60a5fa"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#082f49" : "#0c2135"; radius: 4; border.color: "#0369a1" }
+                                    contentItem: Text { text: parent.text; color: "#D4BE8D"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#14110A" : "#14110A"; radius: 4; border.color: "#9A804D" }
                                 }
                                 Button {
                                     text: "-1°"; implicitWidth: 38; implicitHeight: 26
                                     onClicked: bridge.stepOrientationDiagRotation("YAW", -1.0)
-                                    contentItem: Text { text: parent.text; color: "#60a5fa"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#082f49" : "#0c2135"; radius: 4; border.color: "#0369a1" }
+                                    contentItem: Text { text: parent.text; color: "#D4BE8D"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#14110A" : "#14110A"; radius: 4; border.color: "#9A804D" }
                                 }
 
                                 Slider {
@@ -5217,7 +5176,7 @@ ApplicationWindow {
                                         width: yawSlider.availableWidth
                                         height: 6
                                         radius: 3
-                                        color: "#334155"
+                                        color: "#2A2A34"
                                     }
                                     handle: Rectangle {
                                         x: yawSlider.leftPadding + yawSlider.visualPosition * (yawSlider.availableWidth - width)
@@ -5225,7 +5184,7 @@ ApplicationWindow {
                                         implicitWidth: 18
                                         implicitHeight: 18
                                         radius: 9
-                                        color: yawSlider.pressed ? "#bfdbfe" : "#60a5fa"
+                                        color: yawSlider.pressed ? "#F4F4F6" : "#D4BE8D"
                                         border.color: "white"
                                         border.width: 1.5
                                     }
@@ -5234,20 +5193,20 @@ ApplicationWindow {
                                 Button {
                                     text: "+1°"; implicitWidth: 38; implicitHeight: 26
                                     onClicked: bridge.stepOrientationDiagRotation("YAW", 1.0)
-                                    contentItem: Text { text: parent.text; color: "#60a5fa"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#082f49" : "#0c2135"; radius: 4; border.color: "#0369a1" }
+                                    contentItem: Text { text: parent.text; color: "#D4BE8D"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#14110A" : "#14110A"; radius: 4; border.color: "#9A804D" }
                                 }
                                 Button {
                                     text: "+15°"; implicitWidth: 44; implicitHeight: 26
                                     onClicked: bridge.stepOrientationDiagRotation("YAW", 15.0)
-                                    contentItem: Text { text: parent.text; color: "#60a5fa"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#082f49" : "#0c2135"; radius: 4; border.color: "#0369a1" }
+                                    contentItem: Text { text: parent.text; color: "#D4BE8D"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#14110A" : "#14110A"; radius: 4; border.color: "#9A804D" }
                                 }
                                 Button {
                                     text: "+90°"; implicitWidth: 44; implicitHeight: 26
                                     onClicked: bridge.stepOrientationDiagRotation("YAW", 90.0)
-                                    contentItem: Text { text: parent.text; color: "#60a5fa"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#082f49" : "#0c2135"; radius: 4; border.color: "#0369a1" }
+                                    contentItem: Text { text: parent.text; color: "#D4BE8D"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#14110A" : "#14110A"; radius: 4; border.color: "#9A804D" }
                                 }
                             }
                         }
@@ -5263,22 +5222,22 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true
                         implicitHeight: 90
-                        color: "#0f172a"
+                        color: "#0A0A0E"
                         radius: 8
-                        border.color: "#334155"
+                        border.color: "#2A2A34"
                         ColumnLayout {
                             anchors.fill: parent
                             anchors.margins: 10
                             spacing: 4
                             Text {
                                 text: "Equivalent 3×3 Rotation Matrix (R):"
-                                color: "#94a3b8"
+                                color: "#A1A1AA"
                                 font.pixelSize: 11
                                 font.bold: true
                             }
                             Text {
                                 text: bridge.orientationDiagMatrixStr
-                                color: "#38bdf8"
+                                color: "#D4BE8D"
                                 font.family: "Monospace"
                                 font.pixelSize: 11
                                 font.bold: true
@@ -5291,22 +5250,22 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true
                         implicitHeight: 90
-                        color: "#0f172a"
+                        color: "#0A0A0E"
                         radius: 8
-                        border.color: "#334155"
+                        border.color: "#2A2A34"
                         ColumnLayout {
                             anchors.fill: parent
                             anchors.margins: 10
                             spacing: 4
                             Text {
                                 text: "Candidate Transform T_AV_from_backend:"
-                                color: "#94a3b8"
+                                color: "#A1A1AA"
                                 font.pixelSize: 11
                                 font.bold: true
                             }
                             Text {
                                 text: bridge.orientationDiagTransformStr
-                                color: "#c084fc"
+                                color: "#D4BE8D"
                                 font.family: "Monospace"
                                 font.pixelSize: 11
                                 font.bold: true
@@ -5320,9 +5279,9 @@ ApplicationWindow {
                 Rectangle {
                     Layout.fillWidth: true
                     implicitHeight: 88
-                    color: "#1e1e2d"
+                    color: "#0A0A0E"
                     radius: 8
-                    border.color: "#4f46e5"
+                    border.color: "#9A804D"
                     border.width: 1
                     ColumnLayout {
                         anchors.fill: parent
@@ -5330,7 +5289,7 @@ ApplicationWindow {
                         spacing: 4
                         Text {
                             text: "Physical Alignment Criteria Checklist:"
-                            color: "#a5b4fc"
+                            color: "#D4BE8D"
                             font.pixelSize: 11
                             font.bold: true
                         }
@@ -5338,15 +5297,15 @@ ApplicationWindow {
                             spacing: 24
                             ColumnLayout {
                                 spacing: 2
-                                Text { text: "✓ Floor is horizontal (parallel to XY grid plane)"; color: "#e2e8f0"; font.pixelSize: 11 }
-                                Text { text: "✓ +Z is physically UP (ceiling above floor)"; color: "#e2e8f0"; font.pixelSize: 11 }
-                                Text { text: "✓ Walls and doorways are vertical"; color: "#e2e8f0"; font.pixelSize: 11 }
+                                Text { text: "✓ Floor is horizontal (parallel to XY grid plane)"; color: "#F4F4F6"; font.pixelSize: 11 }
+                                Text { text: "✓ +Z is physically UP (ceiling above floor)"; color: "#F4F4F6"; font.pixelSize: 11 }
+                                Text { text: "✓ Walls and doorways are vertical"; color: "#F4F4F6"; font.pixelSize: 11 }
                             }
                             ColumnLayout {
                                 spacing: 2
-                                Text { text: "✓ Physical forward corresponds to AV +X (screen-UP in 2D view)"; color: "#e2e8f0"; font.pixelSize: 11 }
-                                Text { text: "✓ Physical left corresponds to AV +Y (screen-LEFT in 2D view)"; color: "#e2e8f0"; font.pixelSize: 11 }
-                                Text { text: "✓ 3D Spatial Map and 2D Plan update live at 60 FPS while adjusting"; color: "#38bdf8"; font.pixelSize: 11; font.bold: true }
+                                Text { text: "✓ Physical forward corresponds to AV +X (screen-UP in 2D view)"; color: "#F4F4F6"; font.pixelSize: 11 }
+                                Text { text: "✓ Physical left corresponds to AV +Y (screen-LEFT in 2D view)"; color: "#F4F4F6"; font.pixelSize: 11 }
+                                Text { text: "✓ 3D Spatial Map and 2D Plan update live at 60 FPS while adjusting"; color: "#D4BE8D"; font.pixelSize: 11; font.bold: true }
                             }
                         }
                     }
@@ -5356,14 +5315,14 @@ ApplicationWindow {
 
         footer: Rectangle {
             height: 64
-            color: "#11141c"
+            color: "#0A0A0E"
             radius: 12
             Rectangle {
                 anchors.top: parent.top
                 anchors.left: parent.left
                 anchors.right: parent.right
                 height: 1
-                color: "#28303e"
+                color: "#1F1F26"
             }
             RowLayout {
                 anchors.fill: parent
@@ -5378,11 +5337,11 @@ ApplicationWindow {
                     enabled: !bridge.orientationDiagIsFrozen
                     onClicked: bridge.resetOrientationDiagRotation()
                     contentItem: Text {
-                        text: parent.text; color: parent.enabled ? "#e2e8f0" : "#64748b"; font.pixelSize: 12; font.bold: true
+                        text: parent.text; color: parent.enabled ? "#F4F4F6" : "#8E8E99"; font.pixelSize: 12; font.bold: true
                         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                     }
                     background: Rectangle {
-                        color: parent.hovered ? "#334155" : "#1e293b"; radius: 6; border.color: "#475569"
+                        color: parent.hovered ? "#2A2A34" : "#121217"; radius: 6; border.color: "#2A2A34"
                     }
                 }
 
@@ -5404,11 +5363,11 @@ ApplicationWindow {
                         orientationDiagDialog.close();
                     }
                     contentItem: Text {
-                        text: parent.text; color: "#cbd5e1"; font.pixelSize: 13; font.bold: true
+                        text: parent.text; color: "#D4D4D8"; font.pixelSize: 13; font.bold: true
                         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                     }
                     background: Rectangle {
-                        color: parent.hovered ? "#334155" : "#1e293b"; radius: 6; border.color: "#475569"
+                        color: parent.hovered ? "#2A2A34" : "#121217"; radius: 6; border.color: "#2A2A34"
                     }
                 }
 
@@ -5425,13 +5384,13 @@ ApplicationWindow {
                         }
                     }
                     contentItem: Text {
-                        text: parent.text; color: parent.enabled ? "white" : "#64748b"; font.pixelSize: 13; font.bold: true
+                        text: parent.text; color: parent.enabled ? "white" : "#8E8E99"; font.pixelSize: 13; font.bold: true
                         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                     }
                     background: Rectangle {
-                        color: parent.enabled ? (parent.hovered ? "#9333ea" : "#7e22ce") : "#1e293b"
+                        color: parent.enabled ? (parent.hovered ? "#B89D64" : "#9A804D") : "#121217"
                         radius: 6
-                        border.color: parent.enabled ? "#c084fc" : "#3b0764"
+                        border.color: parent.enabled ? "#B89D64" : "#1F1A10"
                     }
                 }
             }
@@ -5449,9 +5408,9 @@ ApplicationWindow {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
         background: Rectangle {
-            color: "#11141c"
+            color: "#0A0A0E"
             radius: 12
-            border.color: "#232834"
+            border.color: "#1F1F26"
             border.width: 1.5
         }
 
@@ -5474,13 +5433,13 @@ ApplicationWindow {
                     spacing: 2
                     Text {
                         text: "Multi-Node Session Infrastructure (Milestone 10)"
-                        color: "#f8fafc"
+                        color: "#F4F4F6"
                         font.pixelSize: 18
                         font.bold: true
                     }
                     Text {
                         text: "Decentralized Discovery • Persistent Node Identity • Synchronized Coordination Metadata • Independent Spatial Capture"
-                        color: "#94a3b8"
+                        color: "#A1A1AA"
                         font.pixelSize: 11
                     }
                 }
@@ -5492,29 +5451,29 @@ ApplicationWindow {
                     implicitWidth: 32
                     implicitHeight: 32
                     onClicked: multiNodeMeshDialog.close()
-                    contentItem: Text { text: parent.text; color: "#94a3b8"; font.pixelSize: 14; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    background: Rectangle { color: parent.hovered ? "#334155" : "transparent"; radius: 6 }
+                    contentItem: Text { text: parent.text; color: "#A1A1AA"; font.pixelSize: 14; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    background: Rectangle { color: parent.hovered ? "#2A2A34" : "transparent"; radius: 6 }
                 }
             }
 
-            // Architectural Boundary Alert Banner (Requirement 1 & 12)
+            // Real-Time Collaborative SLAM (C-SLAM) Banner
             Rectangle {
                 Layout.fillWidth: true
                 implicitHeight: 46
-                color: "#1c1917"
+                color: "#07170F"
                 radius: 8
-                border.color: "#d97706"
+                border.color: "#10b981"
                 border.width: 1
 
                 RowLayout {
                     anchors.fill: parent
                     anchors.margins: 10
                     spacing: 8
-                    Text { text: "⚠️"; font.pixelSize: 16 }
+                    Text { text: "🛰️"; font.pixelSize: 16 }
                     Text {
                         Layout.fillWidth: true
-                        text: "M10 ARCHITECTURAL INVARIANT: Multi-node coordination, session membership, and capture synchronization only. Cross-node map fusion, SLAM state sharing, and collaborative spatial merging belong to M11. Each node maintains its independent coordinate system."
-                        color: "#fbbf24"
+                        text: "REAL-TIME COLLABORATIVE SLAM (C-SLAM): Unlimited scanners can join the same project/session. Non-overlapping scans are oriented by relative IMU heading and placed at a distinct spatial offset with unique per-scanner colors until overlapping geometry is detected and automatically snapped together."
+                        color: "#34D399"
                         font.pixelSize: 11
                         font.bold: true
                         wrapMode: Text.Wrap
@@ -5538,9 +5497,9 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true
                         implicitHeight: 220
-                        color: "#181e28"
+                        color: "#0A0A0E"
                         radius: 8
-                        border.color: "#28303e"
+                        border.color: "#1F1F26"
 
                         ColumnLayout {
                             anchors.fill: parent
@@ -5551,7 +5510,7 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 Text {
                                     text: "💻 THIS SCANNER NODE (LOCAL)"
-                                    color: "#38bdf8"
+                                    color: "#D4BE8D"
                                     font.pixelSize: 12
                                     font.bold: true
                                 }
@@ -5560,8 +5519,8 @@ ApplicationWindow {
                                     implicitHeight: 20
                                     implicitWidth: roleBadgeText.contentWidth + 12
                                     radius: 10
-                                    color: bridge.isCoordinator ? "#065f46" : "#1e3a5f"
-                                    border.color: bridge.isCoordinator ? "#10b981" : "#38bdf8"
+                                    color: bridge.isCoordinator ? "#0C2618" : "#14110A"
+                                    border.color: bridge.isCoordinator ? "#10b981" : "#B89D64"
                                     Text {
                                         id: roleBadgeText
                                         anchors.centerIn: parent
@@ -5576,10 +5535,10 @@ ApplicationWindow {
                             // Persistent UUID
                             ColumnLayout {
                                 spacing: 2
-                                Text { text: "Persistent Node UUID (Survives IP & Reboots):"; color: "#64748b"; font.pixelSize: 10 }
+                                Text { text: "Persistent Node UUID (Survives IP & Reboots):"; color: "#8E8E99"; font.pixelSize: 10 }
                                 Text {
                                     text: bridge.nodeUuid
-                                    color: "#e2e8f0"
+                                    color: "#F4F4F6"
                                     font.pixelSize: 11
                                     font.family: "Monospace"
                                     font.bold: true
@@ -5590,37 +5549,37 @@ ApplicationWindow {
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: 6
-                                Text { text: "Display Name:"; color: "#94a3b8"; font.pixelSize: 11 }
+                                Text { text: "Display Name:"; color: "#A1A1AA"; font.pixelSize: 11 }
                                 TextField {
                                     id: nodeNameInput
                                     Layout.fillWidth: true
                                     text: bridge.nodeDisplayName
-                                    color: "#f8fafc"
+                                    color: "#F4F4F6"
                                     font.pixelSize: 11
-                                    background: Rectangle { color: "#0f172a"; radius: 4; border.color: "#334155" }
+                                    background: Rectangle { color: "#0A0A0E"; radius: 4; border.color: "#2A2A34" }
                                 }
                                 Button {
                                     text: "Save"
                                     implicitWidth: 50
                                     implicitHeight: 28
                                     onClicked: bridge.setNodeDisplayName(nodeNameInput.text)
-                                    contentItem: Text { text: parent.text; color: "#38bdf8"; font.pixelSize: 11; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#1e3a5f" : "#0f172a"; radius: 4; border.color: "#38bdf8" }
+                                    contentItem: Text { text: parent.text; color: "#D4BE8D"; font.pixelSize: 11; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#14110A" : "#0A0A0E"; radius: 4; border.color: "#B89D64" }
                                 }
                             }
 
                             // Platform & Hardware Details
                             RowLayout {
                                 Layout.fillWidth: true
-                                Text { text: "Platform: "; color: "#64748b"; font.pixelSize: 10 }
-                                Text { text: bridge.nodePlatform; color: "#94a3b8"; font.pixelSize: 10; font.bold: true }
+                                Text { text: "Platform: "; color: "#8E8E99"; font.pixelSize: 10 }
+                                Text { text: bridge.nodePlatform; color: "#A1A1AA"; font.pixelSize: 10; font.bold: true }
                                 Item { Layout.fillWidth: true }
-                                Text { text: "Status: "; color: "#64748b"; font.pixelSize: 10 }
+                                Text { text: "Status: "; color: "#8E8E99"; font.pixelSize: 10 }
                                 Text { text: bridge.nodeStatus; color: bridge.isCapturing ? "#f59e0b" : "#10b981"; font.pixelSize: 10; font.bold: true }
                             }
                             Text {
                                 text: "Hardware: " + bridge.nodeHardware
-                                color: "#64748b"
+                                color: "#8E8E99"
                                 font.pixelSize: 10
                                 elide: Text.ElideRight
                                 Layout.fillWidth: true
@@ -5632,9 +5591,9 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true
                         implicitHeight: 190
-                        color: "#181e28"
+                        color: "#0A0A0E"
                         radius: 8
-                        border.color: "#28303e"
+                        border.color: "#1F1F26"
 
                         ColumnLayout {
                             anchors.fill: parent
@@ -5643,17 +5602,17 @@ ApplicationWindow {
 
                             Text {
                                 text: "🎯 ACTIVE SESSION MANAGEMENT"
-                                color: "#a855f7"
+                                color: "#B89D64"
                                 font.pixelSize: 12
                                 font.bold: true
                             }
 
                             ColumnLayout {
                                 spacing: 2
-                                Text { text: "Session ID:"; color: "#64748b"; font.pixelSize: 10 }
+                                Text { text: "Session ID:"; color: "#8E8E99"; font.pixelSize: 10 }
                                 Text {
                                     text: bridge.isMultiNodeSessionActive ? bridge.activeMultiNodeSessionId : "No Active Multi-Node Session (Standalone)"
-                                    color: bridge.isMultiNodeSessionActive ? "#c084fc" : "#94a3b8"
+                                    color: bridge.isMultiNodeSessionActive ? "#D4BE8D" : "#A1A1AA"
                                     font.pixelSize: 11
                                     font.family: "Monospace"
                                     font.bold: bridge.isMultiNodeSessionActive
@@ -5662,7 +5621,7 @@ ApplicationWindow {
 
                             Text {
                                 text: bridge.multiNodeNotice
-                                color: "#94a3b8"
+                                color: "#A1A1AA"
                                 font.pixelSize: 10
                                 Layout.fillWidth: true
                                 wrapMode: Text.Wrap
@@ -5682,7 +5641,7 @@ ApplicationWindow {
                                     text: "👑 Create Multi-Node Session"
                                     onClicked: bridge.createMultiNodeSession("")
                                     contentItem: Text { text: parent.text; color: "white"; font.pixelSize: 11; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#7e22ce" : "#6b21a8"; radius: 6 }
+                                    background: Rectangle { color: parent.hovered ? "#9A804D" : "#D4BE8D"; radius: 6 }
                                 }
 
                                 Button {
@@ -5711,8 +5670,8 @@ ApplicationWindow {
                                     visible: bridge.isMultiNodeSessionActive
                                     text: "🚪 Leave"
                                     onClicked: bridge.leaveMultiNodeSession()
-                                    contentItem: Text { text: parent.text; color: "#f87171"; font.pixelSize: 11; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#450a0a" : "#1e1b24"; radius: 6; border.color: "#7f1d1d" }
+                                    contentItem: Text { text: parent.text; color: "#DC2626"; font.pixelSize: 11; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#1C090B" : "#14110A"; radius: 6; border.color: "#280D10" }
                                 }
                             }
                         }
@@ -5722,9 +5681,9 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        color: "#181e28"
+                        color: "#0A0A0E"
                         radius: 8
-                        border.color: "#28303e"
+                        border.color: "#1F1F26"
 
                         ColumnLayout {
                             anchors.fill: parent
@@ -5733,13 +5692,13 @@ ApplicationWindow {
 
                             Text {
                                 text: "🌐 ROUTED / TAILSCALE / VPN PEER"
-                                color: "#34d399"
+                                color: "#34D399"
                                 font.pixelSize: 12
                                 font.bold: true
                             }
                             Text {
                                 text: "For non-broadcast routed networks or Tailscale mesh, enter peer IP directly:"
-                                color: "#64748b"
+                                color: "#8E8E99"
                                 font.pixelSize: 10
                             }
 
@@ -5751,17 +5710,17 @@ ApplicationWindow {
                                     id: manualPeerIp
                                     Layout.fillWidth: true
                                     placeholderText: "Peer IP (e.g. 100.x.x.x or 192.168.1.50)"
-                                    color: "#f8fafc"
+                                    color: "#F4F4F6"
                                     font.pixelSize: 11
-                                    background: Rectangle { color: "#0f172a"; radius: 4; border.color: "#334155" }
+                                    background: Rectangle { color: "#0A0A0E"; radius: 4; border.color: "#2A2A34" }
                                 }
                                 TextField {
                                     id: manualPeerPort
                                     implicitWidth: 60
                                     text: "9110"
-                                    color: "#f8fafc"
+                                    color: "#F4F4F6"
                                     font.pixelSize: 11
-                                    background: Rectangle { color: "#0f172a"; radius: 4; border.color: "#334155" }
+                                    background: Rectangle { color: "#0A0A0E"; radius: 4; border.color: "#2A2A34" }
                                 }
                                 Button {
                                     text: "Add Peer"
@@ -5773,8 +5732,8 @@ ApplicationWindow {
                                             manualPeerIp.text = "";
                                         }
                                     }
-                                    contentItem: Text { text: parent.text; color: "#34d399"; font.pixelSize: 11; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#064e3b" : "#0f172a"; radius: 4; border.color: "#059669" }
+                                    contentItem: Text { text: parent.text; color: "#34D399"; font.pixelSize: 11; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#07170F" : "#0A0A0E"; radius: 4; border.color: "#059669" }
                                 }
                             }
                         }
@@ -5791,9 +5750,9 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 280
-                        color: "#181e28"
+                        color: "#0A0A0E"
                         radius: 8
-                        border.color: "#28303e"
+                        border.color: "#1F1F26"
 
                         ColumnLayout {
                             anchors.fill: parent
@@ -5804,7 +5763,7 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 Text {
                                     text: "📡 DISCOVERED NODES ON NETWORK (UDP :9110)"
-                                    color: "#38bdf8"
+                                    color: "#D4BE8D"
                                     font.pixelSize: 12
                                     font.bold: true
                                 }
@@ -5814,8 +5773,8 @@ ApplicationWindow {
                                     implicitWidth: 74
                                     implicitHeight: 24
                                     onClicked: bridge.refreshMultiNodeDiscovery()
-                                    contentItem: Text { text: parent.text; color: "#94a3b8"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: parent.hovered ? "#334155" : "#0f172a"; radius: 4; border.color: "#334155" }
+                                    contentItem: Text { text: parent.text; color: "#A1A1AA"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#2A2A34" : "#0A0A0E"; radius: 4; border.color: "#2A2A34" }
                                 }
                             }
 
@@ -5832,8 +5791,8 @@ ApplicationWindow {
                                     width: discListView.width
                                     implicitHeight: 56
                                     radius: 6
-                                    color: modelData.isSelf ? "#0f172a" : "#1e293b"
-                                    border.color: modelData.isSelf ? "#334155" : "#3b82f6"
+                                    color: modelData.isSelf ? "#0A0A0E" : "#121217"
+                                    border.color: modelData.isSelf ? "#2A2A34" : "#B89D64"
                                     border.width: 1
 
                                     RowLayout {
@@ -5845,7 +5804,7 @@ ApplicationWindow {
                                             width: 8
                                             height: 8
                                             radius: 4
-                                            color: modelData.isSelf ? "#64748b" : (modelData.isAvailable ? "#10b981" : "#f59e0b")
+                                            color: modelData.isSelf ? "#8E8E99" : (modelData.isAvailable ? "#10b981" : "#f59e0b")
                                         }
 
                                         ColumnLayout {
@@ -5854,7 +5813,7 @@ ApplicationWindow {
                                                 spacing: 6
                                                 Text {
                                                     text: modelData.displayName
-                                                    color: "#f8fafc"
+                                                    color: "#F4F4F6"
                                                     font.pixelSize: 12
                                                     font.bold: true
                                                 }
@@ -5862,13 +5821,13 @@ ApplicationWindow {
                                                     implicitHeight: 16
                                                     implicitWidth: platBadgeText.contentWidth + 8
                                                     radius: 4
-                                                    color: "#0f172a"
-                                                    border.color: "#475569"
+                                                    color: "#0A0A0E"
+                                                    border.color: "#2A2A34"
                                                     Text {
                                                         id: platBadgeText
                                                         anchors.centerIn: parent
                                                         text: modelData.platform
-                                                        color: "#94a3b8"
+                                                        color: "#A1A1AA"
                                                         font.pixelSize: 9
                                                         font.bold: true
                                                     }
@@ -5876,13 +5835,13 @@ ApplicationWindow {
                                                 Text {
                                                     visible: modelData.isSelf
                                                     text: "(This Device)"
-                                                    color: "#64748b"
+                                                    color: "#8E8E99"
                                                     font.pixelSize: 10
                                                 }
                                             }
                                             Text {
                                                 text: modelData.endpoint + " • UUID: " + modelData.shortUuid + " • " + modelData.sessionState
-                                                color: "#94a3b8"
+                                                color: "#A1A1AA"
                                                 font.pixelSize: 10
                                                 font.family: "Monospace"
                                             }
@@ -5897,8 +5856,8 @@ ApplicationWindow {
                                             implicitWidth: 70
                                             implicitHeight: 28
                                             onClicked: bridge.inviteNodeToSession(modelData.uuid)
-                                            contentItem: Text { text: parent.text; color: "#38bdf8"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                            background: Rectangle { color: parent.hovered ? "#0369a1" : "#075985"; radius: 4 }
+                                            contentItem: Text { text: parent.text; color: "#D4BE8D"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                            background: Rectangle { color: parent.hovered ? "#9A804D" : "#D4BE8D"; radius: 4 }
                                         }
 
                                         Button {
@@ -5907,8 +5866,8 @@ ApplicationWindow {
                                             implicitWidth: 70
                                             implicitHeight: 28
                                             onClicked: bridge.joinMultiNodeSession(modelData.currentSessionId, modelData.ip, modelData.port)
-                                            contentItem: Text { text: parent.text; color: "#4ade80"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                            background: Rectangle { color: parent.hovered ? "#15803d" : "#166534"; radius: 4 }
+                                            contentItem: Text { text: parent.text; color: "#34D399"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                            background: Rectangle { color: parent.hovered ? "#4ADE80" : "#34D399"; radius: 4 }
                                         }
                                     }
                                 }
@@ -5917,7 +5876,7 @@ ApplicationWindow {
                                     anchors.centerIn: parent
                                     visible: discListView.count === 0
                                     text: "No network peer nodes currently detected on UDP port 9110."
-                                    color: "#64748b"
+                                    color: "#8E8E99"
                                     font.pixelSize: 11
                                 }
                             }
@@ -5928,9 +5887,9 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        color: "#181e28"
+                        color: "#0A0A0E"
                         radius: 8
-                        border.color: "#28303e"
+                        border.color: "#1F1F26"
 
                         ColumnLayout {
                             anchors.fill: parent
@@ -5948,7 +5907,7 @@ ApplicationWindow {
                                 Item { Layout.fillWidth: true }
                                 Text {
                                     text: bridge.isMultiNodeSessionActive ? (bridge.sessionMembers.length + " Node(s) in Mesh") : "Inactive"
-                                    color: "#94a3b8"
+                                    color: "#A1A1AA"
                                     font.pixelSize: 11
                                 }
                             }
@@ -5965,7 +5924,7 @@ ApplicationWindow {
                                     width: memberListView.width
                                     implicitHeight: 52
                                     radius: 6
-                                    color: "#1e293b"
+                                    color: "#121217"
                                     border.color: modelData.connected ? "#10b981" : "#ef4444"
                                     border.width: 1
 
@@ -5985,7 +5944,7 @@ ApplicationWindow {
                                                 spacing: 6
                                                 Text {
                                                     text: modelData.displayName
-                                                    color: "#f8fafc"
+                                                    color: "#F4F4F6"
                                                     font.pixelSize: 12
                                                     font.bold: true
                                                 }
@@ -5993,7 +5952,7 @@ ApplicationWindow {
                                                     implicitHeight: 16
                                                     implicitWidth: memRoleBadge.contentWidth + 8
                                                     radius: 4
-                                                    color: modelData.isCoordinator ? "#065f46" : "#1e3a5f"
+                                                    color: modelData.isCoordinator ? "#0C2618" : "#14110A"
                                                     Text {
                                                         id: memRoleBadge
                                                         anchors.centerIn: parent
@@ -6007,13 +5966,13 @@ ApplicationWindow {
                                                     implicitHeight: 16
                                                     implicitWidth: memCapturingBadge.contentWidth + 8
                                                     radius: 4
-                                                    color: modelData.capturing ? "#7c2d12" : "#0f172a"
-                                                    border.color: modelData.capturing ? "#f97316" : "#334155"
+                                                    color: modelData.capturing ? "#1C1406" : "#0A0A0E"
+                                                    border.color: modelData.capturing ? "#f97316" : "#2A2A34"
                                                     Text {
                                                         id: memCapturingBadge
                                                         anchors.centerIn: parent
                                                         text: modelData.captureState
-                                                        color: modelData.capturing ? "#fb923c" : "#94a3b8"
+                                                        color: modelData.capturing ? "#fb923c" : "#A1A1AA"
                                                         font.pixelSize: 9
                                                         font.bold: true
                                                     }
@@ -6021,7 +5980,7 @@ ApplicationWindow {
                                             }
                                             Text {
                                                 text: modelData.ip + " • Clock Offset: " + modelData.clockOffsetMs + " • UUID: " + modelData.shortUuid
-                                                color: "#94a3b8"
+                                                color: "#A1A1AA"
                                                 font.pixelSize: 10
                                                 font.family: "Monospace"
                                             }
@@ -6033,13 +5992,13 @@ ApplicationWindow {
                                             implicitHeight: 22
                                             implicitWidth: connStatusText.contentWidth + 12
                                             radius: 11
-                                            color: modelData.connected ? "#064e3b" : "#450a0a"
+                                            color: modelData.connected ? "#07170F" : "#1C090B"
                                             border.color: modelData.connected ? "#10b981" : "#ef4444"
                                             Text {
                                                 id: connStatusText
                                                 anchors.centerIn: parent
                                                 text: modelData.connected ? "CONNECTED" : "OFFLINE"
-                                                color: modelData.connected ? "#34d399" : "#f87171"
+                                                color: modelData.connected ? "#34D399" : "#DC2626"
                                                 font.pixelSize: 9
                                                 font.bold: true
                                             }
@@ -6051,8 +6010,161 @@ ApplicationWindow {
                                     anchors.centerIn: parent
                                     visible: !bridge.isMultiNodeSessionActive || memberListView.count === 0
                                     text: "No active multi-node session mesh members."
-                                    color: "#64748b"
+                                    color: "#8E8E99"
                                     font.pixelSize: 11
+                                }
+                            }
+                        }
+                    }
+
+                    // Card 5: Real-Time C-SLAM Collaborative Map & Unlimited Scanner Alignment
+                    Rectangle {
+                        Layout.fillWidth: true
+                        implicitHeight: 205
+                        color: "#0A0A0E"
+                        radius: 8
+                        border.color: "#10b981"
+                        border.width: 1
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 10
+                            spacing: 6
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                Text {
+                                    text: "🌐 REAL-TIME C-SLAM COLLABORATIVE MERGED MAP (" + bridge.cslamScannerCount + " Scanners • " + bridge.cslamSnappedCount + " Snapped)"
+                                    color: "#34D399"
+                                    font.pixelSize: 11
+                                    font.bold: true
+                                }
+                                Item { Layout.fillWidth: true }
+                                Button {
+                                    text: bridge.selectedNodeViewIndex === -1 ? "✓ Viewing Merged C-SLAM" : "View Merged C-SLAM Cloud"
+                                    implicitHeight: 24
+                                    implicitWidth: 165
+                                    onClicked: bridge.selectNodeView(bridge.selectedNodeViewIndex === -1 ? 0 : -1)
+                                    contentItem: Text { text: parent.text; color: "white"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: bridge.selectedNodeViewIndex === -1 ? "#059669" : "#B89D64"; radius: 5 }
+                                }
+                                Button {
+                                    text: bridge.cslamColorByScanner ? "🎨 Color: Per-Scanner" : "🎨 Color: Native RGB"
+                                    implicitHeight: 24
+                                    implicitWidth: 138
+                                    onClicked: bridge.cslamColorByScanner = !bridge.cslamColorByScanner
+                                    contentItem: Text { text: parent.text; color: "white"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: bridge.cslamColorByScanner ? "#B89D64" : "#2A2A34"; radius: 5 }
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 6
+                                Button {
+                                    text: "+ Add Scanner (Separated IMU Offset)"
+                                    implicitHeight: 24
+                                    Layout.fillWidth: true
+                                    onClicked: bridge.addSimulatedCslamScanner("", false)
+                                    contentItem: Text { text: parent.text; color: "#FB923C"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#1C1406" : "#1C1406"; radius: 5; border.color: "#f97316" }
+                                }
+                                Button {
+                                    text: "+ Add Scanner (Overlapping -> Auto-Snap)"
+                                    implicitHeight: 24
+                                    Layout.fillWidth: true
+                                    onClicked: bridge.addSimulatedCslamScanner("", true)
+                                    contentItem: Text { text: parent.text; color: "#34D399"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#0C2618" : "#07170F"; radius: 5; border.color: "#10b981" }
+                                }
+                                Button {
+                                    text: "⚡ Snap Overlap"
+                                    implicitHeight: 24
+                                    implicitWidth: 105
+                                    onClicked: bridge.triggerCslamSnap()
+                                    contentItem: Text { text: parent.text; color: "white"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#B89D64" : "#9A804D"; radius: 5 }
+                                }
+                                Button {
+                                    text: "Clear"
+                                    implicitHeight: 24
+                                    implicitWidth: 55
+                                    onClicked: bridge.clearCslamScanners()
+                                    contentItem: Text { text: parent.text; color: "#D4D4D8"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: parent.hovered ? "#2A2A34" : "#121217"; radius: 5 }
+                                }
+                            }
+
+                            ListView {
+                                id: cslamScannerListView
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                clip: true
+                                spacing: 4
+                                model: bridge.cslamNodesList
+
+                                delegate: Rectangle {
+                                    width: cslamScannerListView.width
+                                    height: 32
+                                    color: "#0A0A0E"
+                                    radius: 5
+                                    border.color: modelData.colorHex
+                                    border.width: 1
+
+                                    RowLayout {
+                                        anchors.fill: parent
+                                        anchors.leftMargin: 8
+                                        anchors.rightMargin: 8
+                                        spacing: 8
+
+                                        Rectangle {
+                                            width: 12
+                                            height: 12
+                                            radius: 6
+                                            color: modelData.colorHex
+                                        }
+
+                                        Text {
+                                            text: "#" + (modelData.scannerIndex + 1) + " " + modelData.displayName
+                                            color: "#F4F4F6"
+                                            font.pixelSize: 11
+                                            font.bold: true
+                                        }
+
+                                        Rectangle {
+                                            implicitHeight: 16
+                                            implicitWidth: alignBadgeText.contentWidth + 10
+                                            radius: 4
+                                            color: modelData.isSnapped ? "#07170F" : "#1C1406"
+                                            border.color: modelData.isSnapped ? "#10b981" : "#f97316"
+                                            Text {
+                                                id: alignBadgeText
+                                                anchors.centerIn: parent
+                                                text: modelData.alignmentState
+                                                color: modelData.isSnapped ? "#34D399" : "#FB923C"
+                                                font.pixelSize: 9
+                                                font.bold: true
+                                            }
+                                        }
+
+                                        Text {
+                                            text: "Pts: " + modelData.pointCount + " • Overlap: " + modelData.overlapPercent + " • Offset: " + modelData.offsetMeters
+                                            color: "#A1A1AA"
+                                            font.pixelSize: 10
+                                            font.family: "Monospace"
+                                        }
+
+                                        Item { Layout.fillWidth: true }
+                                    }
+                                }
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    visible: cslamScannerListView.count === 0
+                                    text: bridge.cslamStatusSummary
+                                    color: "#8E8E99"
+                                    font.pixelSize: 10
                                 }
                             }
                         }
@@ -6069,8 +6181,8 @@ ApplicationWindow {
                     implicitWidth: 100
                     implicitHeight: 36
                     onClicked: multiNodeMeshDialog.close()
-                    contentItem: Text { text: parent.text; color: "#cbd5e1"; font.pixelSize: 12; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    background: Rectangle { color: parent.hovered ? "#334155" : "#1e293b"; radius: 6; border.color: "#475569" }
+                    contentItem: Text { text: parent.text; color: "#D4D4D8"; font.pixelSize: 12; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    background: Rectangle { color: parent.hovered ? "#2A2A34" : "#121217"; radius: 6; border.color: "#2A2A34" }
                 }
             }
         }
@@ -6183,9 +6295,9 @@ ApplicationWindow {
         }
 
         background: Rectangle {
-            color: "#0f172a"
+            color: "#0A0A0E"
             radius: 12
-            border.color: "#334155"
+            border.color: "#2A2A34"
             border.width: 1.5
         }
 
@@ -6203,7 +6315,7 @@ ApplicationWindow {
                     width: 38
                     height: 38
                     radius: 8
-                    color: "#042f2e"
+                    color: "#07170F"
                     border.color: "#14b8a6"
                     Text {
                         anchors.centerIn: parent
@@ -6216,13 +6328,13 @@ ApplicationWindow {
                     spacing: 2
                     Text {
                         text: "Cross-Capture & Cross-Sensor Offline Registration (Milestone 9)"
-                        color: "#f8fafc"
+                        color: "#F4F4F6"
                         font.pixelSize: 16
                         font.bold: true
                     }
                     Text {
                         text: "Multi-Scale SAC-IA Coarse Alignment + GICP Fine Alignment • Strict SE(3) Metric Scale Lock • Visual Inspection"
-                        color: "#94a3b8"
+                        color: "#A1A1AA"
                         font.pixelSize: 11
                     }
                 }
@@ -6234,8 +6346,8 @@ ApplicationWindow {
                     implicitWidth: 32
                     implicitHeight: 32
                     onClicked: offlineRegistrationDialog.close()
-                    contentItem: Text { text: parent.text; color: "#94a3b8"; font.pixelSize: 14; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    background: Rectangle { color: parent.hovered ? "#334155" : "transparent"; radius: 6 }
+                    contentItem: Text { text: parent.text; color: "#A1A1AA"; font.pixelSize: 14; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    background: Rectangle { color: parent.hovered ? "#2A2A34" : "transparent"; radius: 6 }
                 }
             }
 
@@ -6248,8 +6360,8 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     height: 36
                     radius: 6
-                    color: offlineRegistrationDialog.regMode === 0 ? "#0369a1" : "#1e293b"
-                    border.color: offlineRegistrationDialog.regMode === 0 ? "#38bdf8" : "#334155"
+                    color: offlineRegistrationDialog.regMode === 0 ? "#9A804D" : "#121217"
+                    border.color: offlineRegistrationDialog.regMode === 0 ? "#B89D64" : "#2A2A34"
                     border.width: offlineRegistrationDialog.regMode === 0 ? 1.5 : 1
                     MouseArea {
                         anchors.fill: parent
@@ -6265,7 +6377,7 @@ ApplicationWindow {
                         Text { text: "⚡"; font.pixelSize: 13 }
                         Text {
                             text: "Same Session Captures (Multi-Sensor)"
-                            color: offlineRegistrationDialog.regMode === 0 ? "white" : "#94a3b8"
+                            color: offlineRegistrationDialog.regMode === 0 ? "white" : "#A1A1AA"
                             font.pixelSize: 11
                             font.bold: offlineRegistrationDialog.regMode === 0
                         }
@@ -6276,8 +6388,8 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     height: 36
                     radius: 6
-                    color: offlineRegistrationDialog.regMode === 1 ? "#0f766e" : "#1e293b"
-                    border.color: offlineRegistrationDialog.regMode === 1 ? "#14b8a6" : "#334155"
+                    color: offlineRegistrationDialog.regMode === 1 ? "#2DD4BF" : "#121217"
+                    border.color: offlineRegistrationDialog.regMode === 1 ? "#14b8a6" : "#2A2A34"
                     border.width: offlineRegistrationDialog.regMode === 1 ? 1.5 : 1
                     MouseArea {
                         anchors.fill: parent
@@ -6301,7 +6413,7 @@ ApplicationWindow {
                         Text { text: "🌐"; font.pixelSize: 13 }
                         Text {
                             text: "Cross-Project Alignment (Merge Across Projects)"
-                            color: offlineRegistrationDialog.regMode === 1 ? "white" : "#94a3b8"
+                            color: offlineRegistrationDialog.regMode === 1 ? "white" : "#A1A1AA"
                             font.pixelSize: 11
                             font.bold: offlineRegistrationDialog.regMode === 1
                         }
@@ -6309,7 +6421,7 @@ ApplicationWindow {
                 }
             }
 
-            Rectangle { Layout.fillWidth: true; height: 1; color: "#1e293b" }
+            Rectangle { Layout.fillWidth: true; height: 1; color: "#121217" }
 
             // Main Two-Column Body
             RowLayout {
@@ -6321,9 +6433,9 @@ ApplicationWindow {
                 Rectangle {
                     Layout.fillHeight: true
                     Layout.preferredWidth: 490
-                    color: "#161d2b"
+                    color: "#121217"
                     radius: 8
-                    border.color: "#232e42"
+                    border.color: "#1F1F26"
                     clip: true
 
                     ColumnLayout {
@@ -6333,7 +6445,7 @@ ApplicationWindow {
 
                         Text {
                             text: offlineRegistrationDialog.regMode === 0 ? "1. SELECT SESSION CAPTURES TO REGISTER" : "1. SELECT CROSS-PROJECT CLOUDS TO MERGE"
-                            color: "#38bdf8"
+                            color: "#D4BE8D"
                             font.bold: true
                             font.pixelSize: 11
                             font.letterSpacing: 0.5
@@ -6353,14 +6465,14 @@ ApplicationWindow {
                                 RowLayout {
                                     Text {
                                         text: "Reference Capture (Fixed Anchor Frame):"
-                                        color: "#00e5ff"
+                                        color: "#D4BE8D"
                                         font.bold: true
                                         font.pixelSize: 11
                                     }
                                     Item { Layout.fillWidth: true }
                                     Text {
                                         text: "Source A (Cyan)"
-                                        color: "#00e5ff"
+                                        color: "#D4BE8D"
                                         font.pixelSize: 10
                                     }
                                 }
@@ -6368,9 +6480,9 @@ ApplicationWindow {
                                 Rectangle {
                                     Layout.fillWidth: true
                                     height: 68
-                                    color: "#0f172a"
+                                    color: "#0A0A0E"
                                     radius: 6
-                                    border.color: "#1e293b"
+                                    border.color: "#121217"
 
                                     ListView {
                                         id: refListView
@@ -6382,8 +6494,8 @@ ApplicationWindow {
                                             width: refListView.width
                                             height: 30
                                             radius: 4
-                                            color: offlineRegistrationDialog.selectedRefId === modelData.capture_id ? "#0e3a53" : (refMa.containsMouse ? "#1e293b" : "transparent")
-                                            border.color: offlineRegistrationDialog.selectedRefId === modelData.capture_id ? "#00e5ff" : "transparent"
+                                            color: offlineRegistrationDialog.selectedRefId === modelData.capture_id ? "#1F1A10" : (refMa.containsMouse ? "#121217" : "transparent")
+                                            border.color: offlineRegistrationDialog.selectedRefId === modelData.capture_id ? "#B89D64" : "transparent"
                                             MouseArea {
                                                 id: refMa
                                                 anchors.fill: parent
@@ -6397,14 +6509,14 @@ ApplicationWindow {
                                                 anchors.rightMargin: 8
                                                 Text {
                                                     text: (modelData.sensor_id.indexOf("airy") !== -1 ? "📡 " : "📷 ") + modelData.sensor_name
-                                                    color: offlineRegistrationDialog.selectedRefId === modelData.capture_id ? "#00e5ff" : "#e2e8f0"
+                                                    color: offlineRegistrationDialog.selectedRefId === modelData.capture_id ? "#D4BE8D" : "#F4F4F6"
                                                     font.pixelSize: 11
                                                     font.bold: offlineRegistrationDialog.selectedRefId === modelData.capture_id
                                                 }
                                                 Item { Layout.fillWidth: true }
                                                 Text {
                                                     text: modelData.point_count + " pts"
-                                                    color: "#94a3b8"
+                                                    color: "#A1A1AA"
                                                     font.pixelSize: 10
                                                     font.family: "Monospace"
                                                 }
@@ -6416,7 +6528,7 @@ ApplicationWindow {
                                         anchors.centerIn: parent
                                         visible: bridge.availableSessionCaptures.length === 0
                                         text: "No session captures found in active project."
-                                        color: "#64748b"
+                                        color: "#8E8E99"
                                         font.pixelSize: 10
                                     }
                                 }
@@ -6445,9 +6557,9 @@ ApplicationWindow {
                                 Rectangle {
                                     Layout.fillWidth: true
                                     height: 68
-                                    color: "#0f172a"
+                                    color: "#0A0A0E"
                                     radius: 6
-                                    border.color: "#1e293b"
+                                    border.color: "#121217"
 
                                     ListView {
                                         id: movListView
@@ -6459,7 +6571,7 @@ ApplicationWindow {
                                             width: movListView.width
                                             height: 30
                                             radius: 4
-                                            color: offlineRegistrationDialog.selectedMovId === modelData.capture_id ? "#451a03" : (movMa.containsMouse ? "#1e293b" : "transparent")
+                                            color: offlineRegistrationDialog.selectedMovId === modelData.capture_id ? "#1C1406" : (movMa.containsMouse ? "#121217" : "transparent")
                                             border.color: offlineRegistrationDialog.selectedMovId === modelData.capture_id ? "#ff9100" : "transparent"
                                             MouseArea {
                                                 id: movMa
@@ -6474,14 +6586,14 @@ ApplicationWindow {
                                                 anchors.rightMargin: 8
                                                 Text {
                                                     text: (modelData.sensor_id.indexOf("gemini") !== -1 ? "📷 " : "📡 ") + modelData.sensor_name
-                                                    color: offlineRegistrationDialog.selectedMovId === modelData.capture_id ? "#ff9100" : "#e2e8f0"
+                                                    color: offlineRegistrationDialog.selectedMovId === modelData.capture_id ? "#ff9100" : "#F4F4F6"
                                                     font.pixelSize: 11
                                                     font.bold: offlineRegistrationDialog.selectedMovId === modelData.capture_id
                                                 }
                                                 Item { Layout.fillWidth: true }
                                                 Text {
                                                     text: modelData.point_count + " pts"
-                                                    color: "#94a3b8"
+                                                    color: "#A1A1AA"
                                                     font.pixelSize: 10
                                                     font.family: "Monospace"
                                                 }
@@ -6493,7 +6605,7 @@ ApplicationWindow {
                                         anchors.centerIn: parent
                                         visible: bridge.availableSessionCaptures.length === 0
                                         text: "No session captures found in active project."
-                                        color: "#64748b"
+                                        color: "#8E8E99"
                                         font.pixelSize: 10
                                     }
                                 }
@@ -6514,12 +6626,12 @@ ApplicationWindow {
                                 RowLayout {
                                     Text {
                                         text: "Project A (Reference Anchor):"
-                                        color: "#00e5ff"
+                                        color: "#D4BE8D"
                                         font.bold: true
                                         font.pixelSize: 11
                                     }
                                     Item { Layout.fillWidth: true }
-                                    Text { text: "Source A (Cyan)"; color: "#00e5ff"; font.pixelSize: 10 }
+                                    Text { text: "Source A (Cyan)"; color: "#D4BE8D"; font.pixelSize: 10 }
                                 }
 
                                 ComboBox {
@@ -6536,15 +6648,15 @@ ApplicationWindow {
                                         }
                                     }
                                     background: Rectangle {
-                                        color: "#0f172a"
-                                        border.color: "#00e5ff"
+                                        color: "#0A0A0E"
+                                        border.color: "#B89D64"
                                         radius: 6
                                     }
                                     contentItem: Text {
                                         leftPadding: 10
                                         rightPadding: 24
                                         text: crossRefProjCombo.displayText
-                                        color: "#00e5ff"
+                                        color: "#D4BE8D"
                                         elide: Text.ElideRight
                                         verticalAlignment: Text.AlignVCenter
                                         font.pixelSize: 11
@@ -6555,9 +6667,9 @@ ApplicationWindow {
                                 Rectangle {
                                     Layout.fillWidth: true
                                     height: 58
-                                    color: "#0a0e17"
+                                    color: "#0A0A0E"
                                     radius: 6
-                                    border.color: "#1e293b"
+                                    border.color: "#121217"
 
                                     ListView {
                                         id: crossRefCloudsListView
@@ -6569,8 +6681,8 @@ ApplicationWindow {
                                             width: crossRefCloudsListView.width
                                             height: 26
                                             radius: 4
-                                            color: offlineRegistrationDialog.crossRefCloudId === modelData.cloud_id ? "#0e3a53" : (refCma.containsMouse ? "#1e293b" : "transparent")
-                                            border.color: offlineRegistrationDialog.crossRefCloudId === modelData.cloud_id ? "#00e5ff" : "transparent"
+                                            color: offlineRegistrationDialog.crossRefCloudId === modelData.cloud_id ? "#1F1A10" : (refCma.containsMouse ? "#121217" : "transparent")
+                                            border.color: offlineRegistrationDialog.crossRefCloudId === modelData.cloud_id ? "#B89D64" : "transparent"
                                             MouseArea {
                                                 id: refCma
                                                 anchors.fill: parent
@@ -6584,7 +6696,7 @@ ApplicationWindow {
                                                 anchors.rightMargin: 6
                                                 Text {
                                                     text: modelData.display_text
-                                                    color: offlineRegistrationDialog.crossRefCloudId === modelData.cloud_id ? "#00e5ff" : "#e2e8f0"
+                                                    color: offlineRegistrationDialog.crossRefCloudId === modelData.cloud_id ? "#D4BE8D" : "#F4F4F6"
                                                     font.pixelSize: 10
                                                     font.bold: offlineRegistrationDialog.crossRefCloudId === modelData.cloud_id
                                                     elide: Text.ElideRight
@@ -6597,7 +6709,7 @@ ApplicationWindow {
                                         anchors.centerIn: parent
                                         visible: offlineRegistrationDialog.crossRefClouds.length === 0
                                         text: "No point clouds found in Project A."
-                                        color: "#64748b"
+                                        color: "#8E8E99"
                                         font.pixelSize: 10
                                     }
                                 }
@@ -6633,7 +6745,7 @@ ApplicationWindow {
                                         }
                                     }
                                     background: Rectangle {
-                                        color: "#0f172a"
+                                        color: "#0A0A0E"
                                         border.color: "#ff9100"
                                         radius: 6
                                     }
@@ -6652,9 +6764,9 @@ ApplicationWindow {
                                 Rectangle {
                                     Layout.fillWidth: true
                                     height: 58
-                                    color: "#0a0e17"
+                                    color: "#0A0A0E"
                                     radius: 6
-                                    border.color: "#1e293b"
+                                    border.color: "#121217"
 
                                     ListView {
                                         id: crossMovCloudsListView
@@ -6666,7 +6778,7 @@ ApplicationWindow {
                                             width: crossMovCloudsListView.width
                                             height: 26
                                             radius: 4
-                                            color: offlineRegistrationDialog.crossMovCloudId === modelData.cloud_id ? "#451a03" : (movCma.containsMouse ? "#1e293b" : "transparent")
+                                            color: offlineRegistrationDialog.crossMovCloudId === modelData.cloud_id ? "#1C1406" : (movCma.containsMouse ? "#121217" : "transparent")
                                             border.color: offlineRegistrationDialog.crossMovCloudId === modelData.cloud_id ? "#ff9100" : "transparent"
                                             MouseArea {
                                                 id: movCma
@@ -6681,7 +6793,7 @@ ApplicationWindow {
                                                 anchors.rightMargin: 6
                                                 Text {
                                                     text: modelData.display_text
-                                                    color: offlineRegistrationDialog.crossMovCloudId === modelData.cloud_id ? "#ff9100" : "#e2e8f0"
+                                                    color: offlineRegistrationDialog.crossMovCloudId === modelData.cloud_id ? "#ff9100" : "#F4F4F6"
                                                     font.pixelSize: 10
                                                     font.bold: offlineRegistrationDialog.crossMovCloudId === modelData.cloud_id
                                                     elide: Text.ElideRight
@@ -6694,7 +6806,7 @@ ApplicationWindow {
                                         anchors.centerIn: parent
                                         visible: offlineRegistrationDialog.crossMovClouds.length === 0
                                         text: "No point clouds found in Project B."
-                                        color: "#64748b"
+                                        color: "#8E8E99"
                                         font.pixelSize: 10
                                     }
                                 }
@@ -6708,7 +6820,7 @@ ApplicationWindow {
 
                             Text {
                                 text: "Scale Policy Invariant:"
-                                color: "#cbd5e1"
+                                color: "#D4D4D8"
                                 font.bold: true
                                 font.pixelSize: 11
                             }
@@ -6719,8 +6831,8 @@ ApplicationWindow {
                                     implicitWidth: 220
                                     implicitHeight: 30
                                     radius: 6
-                                    color: offlineRegistrationDialog.selectedScalePolicy === 0 ? "#064e3b" : "#0f172a"
-                                    border.color: offlineRegistrationDialog.selectedScalePolicy === 0 ? "#10b981" : "#334155"
+                                    color: offlineRegistrationDialog.selectedScalePolicy === 0 ? "#07170F" : "#0A0A0E"
+                                    border.color: offlineRegistrationDialog.selectedScalePolicy === 0 ? "#10b981" : "#2A2A34"
                                     border.width: offlineRegistrationDialog.selectedScalePolicy === 0 ? 1.5 : 1
                                     MouseArea {
                                         anchors.fill: parent
@@ -6730,7 +6842,7 @@ ApplicationWindow {
                                     Text {
                                         anchors.centerIn: parent
                                         text: "🔒 Locked SE(3) (Scale = 1.000)"
-                                        color: offlineRegistrationDialog.selectedScalePolicy === 0 ? "#6ee7b7" : "#94a3b8"
+                                        color: offlineRegistrationDialog.selectedScalePolicy === 0 ? "#34D399" : "#A1A1AA"
                                         font.pixelSize: 10
                                         font.bold: true
                                     }
@@ -6740,8 +6852,8 @@ ApplicationWindow {
                                     implicitWidth: 210
                                     implicitHeight: 30
                                     radius: 6
-                                    color: offlineRegistrationDialog.selectedScalePolicy === 1 ? "#3b0764" : "#0f172a"
-                                    border.color: offlineRegistrationDialog.selectedScalePolicy === 1 ? "#a855f7" : "#334155"
+                                    color: offlineRegistrationDialog.selectedScalePolicy === 1 ? "#1F1A10" : "#0A0A0E"
+                                    border.color: offlineRegistrationDialog.selectedScalePolicy === 1 ? "#B89D64" : "#2A2A34"
                                     border.width: offlineRegistrationDialog.selectedScalePolicy === 1 ? 1.5 : 1
                                     MouseArea {
                                         anchors.fill: parent
@@ -6751,7 +6863,7 @@ ApplicationWindow {
                                     Text {
                                         anchors.centerIn: parent
                                         text: "📏 Sim(3) (Scale Ambiguous)"
-                                        color: offlineRegistrationDialog.selectedScalePolicy === 1 ? "#d8b4fe" : "#94a3b8"
+                                        color: offlineRegistrationDialog.selectedScalePolicy === 1 ? "#D4BE8D" : "#A1A1AA"
                                         font.pixelSize: 10
                                         font.bold: true
                                     }
@@ -6765,14 +6877,14 @@ ApplicationWindow {
                             implicitHeight: bannerWarningText.contentHeight + 12
                             visible: offlineRegistrationDialog.bannerWarning !== ""
                             radius: 6
-                            color: "#451a03"
+                            color: "#1C1406"
                             border.color: "#f59e0b"
                             Text {
                                 id: bannerWarningText
                                 anchors.centerIn: parent
                                 width: parent.width - 16
                                 text: offlineRegistrationDialog.bannerWarning
-                                color: "#fef3c7"
+                                color: "#FBBF24"
                                 font.pixelSize: 10
                                 font.bold: true
                                 wrapMode: Text.WordWrap
@@ -6840,26 +6952,26 @@ ApplicationWindow {
                                 }
                             }
                             background: Rectangle {
-                                color: parent.enabled ? (parent.hovered ? "#0284c7" : "#0369a1") : "#1e293b"
+                                color: parent.enabled ? (parent.hovered ? "#B89D64" : "#9A804D") : "#121217"
                                 radius: 6
-                                border.color: parent.enabled ? "#38bdf8" : "#334155"
+                                border.color: parent.enabled ? "#B89D64" : "#2A2A34"
                             }
                         }
 
                         Text {
                             Layout.fillWidth: true
                             text: bridge.registrationStatus
-                            color: "#94a3b8"
+                            color: "#A1A1AA"
                             font.pixelSize: 10
                             wrapMode: Text.WordWrap
                         }
 
-                        Rectangle { Layout.fillWidth: true; height: 1; color: "#232e42" }
+                        Rectangle { Layout.fillWidth: true; height: 1; color: "#1F1F26" }
 
                         // Saved Registrations List
                         Text {
                             text: "2. SAVED SESSION REGISTRATIONS"
-                            color: "#38bdf8"
+                            color: "#D4BE8D"
                             font.bold: true
                             font.pixelSize: 11
                             font.letterSpacing: 0.5
@@ -6868,9 +6980,9 @@ ApplicationWindow {
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            color: "#0f172a"
+                            color: "#0A0A0E"
                             radius: 6
-                            border.color: "#1e293b"
+                            border.color: "#121217"
 
                             ListView {
                                 id: regHistoryListView
@@ -6882,8 +6994,8 @@ ApplicationWindow {
                                     width: regHistoryListView.width
                                     height: 38
                                     radius: 4
-                                    color: regHistoryMa.containsMouse ? "#1e293b" : "transparent"
-                                    border.color: "#232e42"
+                                    color: regHistoryMa.containsMouse ? "#121217" : "transparent"
+                                    border.color: "#1F1F26"
                                     MouseArea {
                                         id: regHistoryMa
                                         anchors.fill: parent
@@ -6905,14 +7017,14 @@ ApplicationWindow {
                                             }
                                             Text {
                                                 text: modelData.overlap_percent.toFixed(1) + "% overlap • " + modelData.inlier_rmse_mm.toFixed(1) + " mm RMSE"
-                                                color: "#94a3b8"
+                                                color: "#A1A1AA"
                                                 font.pixelSize: 9
                                             }
                                         }
                                         Item { Layout.fillWidth: true }
                                         Text {
                                             text: "Load ➔"
-                                            color: "#38bdf8"
+                                            color: "#D4BE8D"
                                             font.pixelSize: 10
                                             font.bold: true
                                         }
@@ -6924,7 +7036,7 @@ ApplicationWindow {
                                 anchors.centerIn: parent
                                 visible: bridge.registrationList.length === 0
                                 text: "No registrations computed yet for this session."
-                                color: "#64748b"
+                                color: "#8E8E99"
                                 font.pixelSize: 11
                             }
                         }
@@ -6935,9 +7047,9 @@ ApplicationWindow {
                 Rectangle {
                     Layout.fillHeight: true
                     Layout.fillWidth: true
-                    color: "#161d2b"
+                    color: "#121217"
                     radius: 8
-                    border.color: "#232e42"
+                    border.color: "#1F1F26"
                     clip: true
 
                     ColumnLayout {
@@ -6950,7 +7062,7 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             Text {
                                 text: "ALIGNMENT RESULTS & QUANTITATIVE METRICS"
-                                color: "#38bdf8"
+                                color: "#D4BE8D"
                                 font.bold: true
                                 font.pixelSize: 11
                                 font.letterSpacing: 0.5
@@ -6960,13 +7072,13 @@ ApplicationWindow {
                                 implicitHeight: 22
                                 implicitWidth: statusPillText.contentWidth + 14
                                 radius: 4
-                                color: bridge.isRegistrationActive ? "#064e3b" : "#1e293b"
-                                border.color: bridge.isRegistrationActive ? "#10b981" : "#475569"
+                                color: bridge.isRegistrationActive ? "#07170F" : "#121217"
+                                border.color: bridge.isRegistrationActive ? "#10b981" : "#2A2A34"
                                 Text {
                                     id: statusPillText
                                     anchors.centerIn: parent
                                     text: bridge.isRegistrationActive ? "CONVERGED" : "NOT ALIGNED"
-                                    color: bridge.isRegistrationActive ? "#6ee7b7" : "#94a3b8"
+                                    color: bridge.isRegistrationActive ? "#34D399" : "#A1A1AA"
                                     font.pixelSize: 10
                                     font.bold: true
                                 }
@@ -6984,13 +7096,13 @@ ApplicationWindow {
                             Rectangle {
                                 Layout.fillWidth: true
                                 height: 58
-                                color: "#0f172a"
+                                color: "#0A0A0E"
                                 radius: 6
-                                border.color: "#1e293b"
+                                border.color: "#121217"
                                 ColumnLayout {
                                     anchors.centerIn: parent
                                     spacing: 2
-                                    Text { text: "INLIER OVERLAP"; color: "#64748b"; font.pixelSize: 9; font.bold: true }
+                                    Text { text: "INLIER OVERLAP"; color: "#8E8E99"; font.pixelSize: 9; font.bold: true }
                                     Text {
                                         text: bridge.isRegistrationActive ? (bridge.registrationOverlapPercent.toFixed(1) + " %") : "--"
                                         color: bridge.registrationOverlapPercent >= 85.0 ? "#10b981" : "#f59e0b"
@@ -7004,13 +7116,13 @@ ApplicationWindow {
                             Rectangle {
                                 Layout.fillWidth: true
                                 height: 58
-                                color: "#0f172a"
+                                color: "#0A0A0E"
                                 radius: 6
-                                border.color: "#1e293b"
+                                border.color: "#121217"
                                 ColumnLayout {
                                     anchors.centerIn: parent
                                     spacing: 2
-                                    Text { text: "INLIER RMSE"; color: "#64748b"; font.pixelSize: 9; font.bold: true }
+                                    Text { text: "INLIER RMSE"; color: "#8E8E99"; font.pixelSize: 9; font.bold: true }
                                     Text {
                                         text: bridge.isRegistrationActive ? (bridge.registrationRmseMm.toFixed(1) + " mm") : "--"
                                         color: bridge.registrationRmseMm <= 60.0 ? "#10b981" : "#ef4444"
@@ -7024,16 +7136,16 @@ ApplicationWindow {
                             Rectangle {
                                 Layout.fillWidth: true
                                 height: 58
-                                color: "#0f172a"
+                                color: "#0A0A0E"
                                 radius: 6
-                                border.color: "#1e293b"
+                                border.color: "#121217"
                                 ColumnLayout {
                                     anchors.centerIn: parent
                                     spacing: 2
-                                    Text { text: "SCALE FACTOR"; color: "#64748b"; font.pixelSize: 9; font.bold: true }
+                                    Text { text: "SCALE FACTOR"; color: "#8E8E99"; font.pixelSize: 9; font.bold: true }
                                     Text {
                                         text: bridge.isRegistrationActive ? (bridge.registrationScale.toFixed(6)) : "--"
-                                        color: "#38bdf8"
+                                        color: "#D4BE8D"
                                         font.pixelSize: 16
                                         font.bold: true
                                     }
@@ -7044,16 +7156,16 @@ ApplicationWindow {
                             Rectangle {
                                 Layout.fillWidth: true
                                 height: 58
-                                color: "#0f172a"
+                                color: "#0A0A0E"
                                 radius: 6
-                                border.color: "#1e293b"
+                                border.color: "#121217"
                                 ColumnLayout {
                                     anchors.centerIn: parent
                                     spacing: 2
-                                    Text { text: "GICP FITNESS"; color: "#64748b"; font.pixelSize: 9; font.bold: true }
+                                    Text { text: "GICP FITNESS"; color: "#8E8E99"; font.pixelSize: 9; font.bold: true }
                                     Text {
                                         text: bridge.isRegistrationActive ? (bridge.registrationFitness.toFixed(4)) : "--"
-                                        color: "#a7f3d0"
+                                        color: "#34D399"
                                         font.pixelSize: 16
                                         font.bold: true
                                     }
@@ -7067,20 +7179,20 @@ ApplicationWindow {
                             spacing: 4
                             Text {
                                 text: "Solved SE(3) Rigid Transformation Matrix T_Ref←Mov:"
-                                color: "#cbd5e1"
+                                color: "#D4D4D8"
                                 font.pixelSize: 10
                                 font.bold: true
                             }
                             Rectangle {
                                 Layout.fillWidth: true
                                 height: 86
-                                color: "#0a0e17"
+                                color: "#0A0A0E"
                                 radius: 6
-                                border.color: "#1e293b"
+                                border.color: "#121217"
                                 Text {
                                     anchors.centerIn: parent
                                     text: bridge.isRegistrationActive ? bridge.registrationTransformStr : "[ Identity / Unregistered ]"
-                                    color: "#38bdf8"
+                                    color: "#D4BE8D"
                                     font.family: "Monospace"
                                     font.pixelSize: 11
                                     lineHeight: 1.2
@@ -7088,12 +7200,12 @@ ApplicationWindow {
                             }
                         }
 
-                        Rectangle { Layout.fillWidth: true; height: 1; color: "#232e42" }
+                        Rectangle { Layout.fillWidth: true; height: 1; color: "#1F1F26" }
 
                         // Visual Distinction & Inspection Tools
                         Text {
                             text: "INTERACTIVE SOURCE DISTINCTION & INSPECTION (M9 ACCEPTANCE)"
-                            color: "#38bdf8"
+                            color: "#D4BE8D"
                             font.bold: true
                             font.pixelSize: 11
                             font.letterSpacing: 0.5
@@ -7106,7 +7218,7 @@ ApplicationWindow {
 
                             Text {
                                 text: "Select Display Cloud View:"
-                                color: "#cbd5e1"
+                                color: "#D4D4D8"
                                 font.pixelSize: 10
                             }
 
@@ -7123,8 +7235,8 @@ ApplicationWindow {
                                         implicitHeight: 34
                                         Layout.fillWidth: true
                                         radius: 6
-                                        color: isSel ? "#0369a1" : "#0f172a"
-                                        border.color: isSel ? "#38bdf8" : "#334155"
+                                        color: isSel ? "#9A804D" : "#0A0A0E"
+                                        border.color: isSel ? "#B89D64" : "#2A2A34"
                                         border.width: isSel ? 1.5 : 1
                                         MouseArea {
                                             anchors.fill: parent
@@ -7138,7 +7250,7 @@ ApplicationWindow {
                                         Text {
                                             anchors.centerIn: parent
                                             text: modelData.label
-                                            color: isSel ? "white" : "#cbd5e1"
+                                            color: isSel ? "white" : "#D4D4D8"
                                             font.pixelSize: 11
                                             font.bold: isSel
                                         }
@@ -7155,7 +7267,7 @@ ApplicationWindow {
                             RowLayout {
                                 Text {
                                     text: "Color Differentiation Scheme:"
-                                    color: "#cbd5e1"
+                                    color: "#D4D4D8"
                                     font.pixelSize: 10
                                 }
                                 Item { Layout.fillWidth: true }
@@ -7165,8 +7277,8 @@ ApplicationWindow {
                                         implicitHeight: 28
                                         implicitWidth: 155
                                         radius: 4
-                                        color: bridge.registrationColorMode === 1 ? "#0f766e" : "#0f172a"
-                                        border.color: bridge.registrationColorMode === 1 ? "#14b8a6" : "#334155"
+                                        color: bridge.registrationColorMode === 1 ? "#2DD4BF" : "#0A0A0E"
+                                        border.color: bridge.registrationColorMode === 1 ? "#14b8a6" : "#2A2A34"
                                         MouseArea {
                                             anchors.fill: parent
                                             cursorShape: Qt.PointingHandCursor
@@ -7179,7 +7291,7 @@ ApplicationWindow {
                                         Text {
                                             anchors.centerIn: parent
                                             text: "📷 True Merged RGB"
-                                            color: bridge.registrationColorMode === 1 ? "#5eead4" : "#94a3b8"
+                                            color: bridge.registrationColorMode === 1 ? "#2DD4BF" : "#A1A1AA"
                                             font.pixelSize: 10
                                             font.bold: bridge.registrationColorMode === 1
                                         }
@@ -7188,8 +7300,8 @@ ApplicationWindow {
                                         implicitHeight: 28
                                         implicitWidth: 155
                                         radius: 4
-                                        color: bridge.registrationColorMode === 0 ? "#7c2d12" : "#0f172a"
-                                        border.color: bridge.registrationColorMode === 0 ? "#f97316" : "#334155"
+                                        color: bridge.registrationColorMode === 0 ? "#1C1406" : "#0A0A0E"
+                                        border.color: bridge.registrationColorMode === 0 ? "#f97316" : "#2A2A34"
                                         MouseArea {
                                             anchors.fill: parent
                                             cursorShape: Qt.PointingHandCursor
@@ -7202,7 +7314,7 @@ ApplicationWindow {
                                         Text {
                                             anchors.centerIn: parent
                                             text: "🎨 Cyan / Amber Diagnostic"
-                                            color: bridge.registrationColorMode === 0 ? "#fed7aa" : "#94a3b8"
+                                            color: bridge.registrationColorMode === 0 ? "#FB923C" : "#A1A1AA"
                                             font.pixelSize: 10
                                             font.bold: bridge.registrationColorMode === 0
                                         }
@@ -7214,9 +7326,9 @@ ApplicationWindow {
                             Rectangle {
                                 Layout.fillWidth: true
                                 height: 50
-                                color: "#0a0e17"
+                                color: "#0A0A0E"
                                 radius: 6
-                                border.color: "#1e293b"
+                                border.color: "#121217"
 
                                 RowLayout {
                                     anchors.centerIn: parent
@@ -7228,25 +7340,25 @@ ApplicationWindow {
                                             width: 14
                                             height: 14
                                             radius: 3
-                                            color: bridge.registrationColorMode === 0 ? "#00e5ff" : "#94a3b8"
+                                            color: bridge.registrationColorMode === 0 ? "#9A804D" : "#A1A1AA"
                                         }
                                         ColumnLayout {
                                             spacing: 1
                                             Text {
                                                 text: bridge.registrationColorMode === 0 ? "Reference Anchor Cloud" : "Reference Cloud (LiDAR / Sensor)"
-                                                color: bridge.registrationColorMode === 0 ? "#00e5ff" : "#e2e8f0"
+                                                color: bridge.registrationColorMode === 0 ? "#D4BE8D" : "#F4F4F6"
                                                 font.pixelSize: 10
                                                 font.bold: true
                                             }
                                             Text {
-                                                text: bridge.registrationColorMode === 0 ? "Diagnostic Cyan (#00E5FF)" : "Preserved Sensor Reflectance / True Color"
-                                                color: "#64748b"
+                                                text: bridge.registrationColorMode === 0 ? "Diagnostic Cyan (#D4BE8D)" : "Preserved Sensor Reflectance / True Color"
+                                                color: "#8E8E99"
                                                 font.pixelSize: 9
                                             }
                                         }
                                     }
 
-                                    Rectangle { width: 1; height: 30; color: "#1e293b" }
+                                    Rectangle { width: 1; height: 30; color: "#121217" }
 
                                     RowLayout {
                                         spacing: 8
@@ -7254,19 +7366,19 @@ ApplicationWindow {
                                             width: 14
                                             height: 14
                                             radius: 3
-                                            color: bridge.registrationColorMode === 0 ? "#ff9100" : "#38bdf8"
+                                            color: bridge.registrationColorMode === 0 ? "#ff9100" : "#9A804D"
                                         }
                                         ColumnLayout {
                                             spacing: 1
                                             Text {
                                                 text: bridge.registrationColorMode === 0 ? "Moving Aligned Cloud" : "Moving Cloud (Camera / RGB-D)"
-                                                color: bridge.registrationColorMode === 0 ? "#ff9100" : "#38bdf8"
+                                                color: bridge.registrationColorMode === 0 ? "#ff9100" : "#D4BE8D"
                                                 font.pixelSize: 10
                                                 font.bold: true
                                             }
                                             Text {
                                                 text: bridge.registrationColorMode === 0 ? "Diagnostic Amber (#FF9100)" : "Preserved Photorealistic Sensor RGB"
-                                                color: "#64748b"
+                                                color: "#8E8E99"
                                                 font.pixelSize: 9
                                             }
                                         }
@@ -7290,16 +7402,16 @@ ApplicationWindow {
                                 onClicked: bridge.saveRegistrationAsSessionMap("")
                                 contentItem: Text {
                                     text: "💾 Set as Active Session Map"
-                                    color: parent.enabled ? "white" : "#64748b"
+                                    color: parent.enabled ? "white" : "#8E8E99"
                                     font.pixelSize: 11
                                     font.bold: true
                                     horizontalAlignment: Text.AlignHCenter
                                     verticalAlignment: Text.AlignVCenter
                                 }
                                 background: Rectangle {
-                                    color: parent.enabled ? (parent.hovered ? "#059669" : "#047857") : "#1e293b"
+                                    color: parent.enabled ? (parent.hovered ? "#34D399" : "#34D399") : "#121217"
                                     radius: 6
-                                    border.color: parent.enabled ? "#10b981" : "#334155"
+                                    border.color: parent.enabled ? "#10b981" : "#2A2A34"
                                 }
                             }
 
@@ -7311,16 +7423,16 @@ ApplicationWindow {
                                 onClicked: newMergedProjectDialog.open()
                                 contentItem: Text {
                                     text: "📁 Save as New Merged Project..."
-                                    color: parent.enabled ? "white" : "#64748b"
+                                    color: parent.enabled ? "white" : "#8E8E99"
                                     font.pixelSize: 11
                                     font.bold: true
                                     horizontalAlignment: Text.AlignHCenter
                                     verticalAlignment: Text.AlignVCenter
                                 }
                                 background: Rectangle {
-                                    color: parent.enabled ? (parent.hovered ? "#7c3aed" : "#6d28d9") : "#1e293b"
+                                    color: parent.enabled ? (parent.hovered ? "#B89D64" : "#9A804D") : "#121217"
                                     radius: 6
-                                    border.color: parent.enabled ? "#a78bfa" : "#334155"
+                                    border.color: parent.enabled ? "#B89D64" : "#2A2A34"
                                 }
                             }
 
@@ -7343,9 +7455,9 @@ ApplicationWindow {
                                     verticalAlignment: Text.AlignVCenter
                                 }
                                 background: Rectangle {
-                                    color: parent.hovered ? "#0284c7" : "#0284c7"
+                                    color: parent.hovered ? "#B89D64" : "#B89D64"
                                     radius: 6
-                                    border.color: "#38bdf8"
+                                    border.color: "#B89D64"
                                 }
                             }
                         }
@@ -7363,9 +7475,9 @@ ApplicationWindow {
         anchors.centerIn: parent
         padding: 0
         background: Rectangle {
-            color: "#0f172a"
+            color: "#0A0A0E"
             radius: 10
-            border.color: "#334155"
+            border.color: "#2A2A34"
             border.width: 1.5
         }
         contentItem: ColumnLayout {
@@ -7379,7 +7491,7 @@ ApplicationWindow {
                 Text { text: "📁"; font.pixelSize: 18 }
                 Text {
                     text: "Save as New Merged Project"
-                    color: "white"
+                    color: "#F4F4F6"
                     font.pixelSize: 15
                     font.bold: true
                 }
@@ -7387,7 +7499,7 @@ ApplicationWindow {
 
             Text {
                 text: "Create an independent AV Scan project containing the registered point cloud with complete transformation metadata."
-                color: "#94a3b8"
+                color: "#A1A1AA"
                 font.pixelSize: 11
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
@@ -7396,27 +7508,27 @@ ApplicationWindow {
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 4
-                Text { text: "Project Name:"; color: "#cbd5e1"; font.pixelSize: 11; font.bold: true }
+                Text { text: "Project Name:"; color: "#D4D4D8"; font.pixelSize: 11; font.bold: true }
                 TextField {
                     id: mergedProjNameInput
                     Layout.fillWidth: true
                     text: "Merged_Scan_" + Qt.formatDateTime(new Date(), "yyyyMMdd_hhmm")
-                    color: "white"
-                    background: Rectangle { color: "#1e293b"; radius: 6; border.color: "#475569" }
+                    color: "#F4F4F6"
+                    background: Rectangle { color: "#121217"; radius: 6; border.color: "#2A2A34" }
                 }
             }
 
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 4
-                Text { text: "Description (Optional):"; color: "#cbd5e1"; font.pixelSize: 11 }
+                Text { text: "Description (Optional):"; color: "#D4D4D8"; font.pixelSize: 11 }
                 TextField {
                     id: mergedProjDescInput
                     Layout.fillWidth: true
                     placeholderText: "e.g. Combined scan merging separate sensor captures"
-                    placeholderTextColor: "#64748b"
-                    color: "white"
-                    background: Rectangle { color: "#1e293b"; radius: 6; border.color: "#475569" }
+                    placeholderTextColor: "#8E8E99"
+                    color: "#F4F4F6"
+                    background: Rectangle { color: "#121217"; radius: 6; border.color: "#2A2A34" }
                 }
             }
 
@@ -7427,8 +7539,8 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     text: "Cancel"
                     onClicked: newMergedProjectDialog.close()
-                    contentItem: Text { text: parent.text; color: "#94a3b8"; horizontalAlignment: Text.AlignHCenter }
-                    background: Rectangle { color: "#1e293b"; radius: 6; border.color: "#334155" }
+                    contentItem: Text { text: parent.text; color: "#A1A1AA"; horizontalAlignment: Text.AlignHCenter }
+                    background: Rectangle { color: "#121217"; radius: 6; border.color: "#2A2A34" }
                 }
                 Button {
                     Layout.fillWidth: true
@@ -7443,7 +7555,719 @@ ApplicationWindow {
                         }
                     }
                     contentItem: Text { text: parent.text; color: "white"; font.bold: true; horizontalAlignment: Text.AlignHCenter }
-                    background: Rectangle { color: "#7c3aed"; radius: 6; border.color: "#a78bfa" }
+                    background: Rectangle { color: "#B89D64"; radius: 6; border.color: "#B89D64" }
+                }
+            }
+        }
+    }
+
+    // ==========================================
+    // MILESTONE 7 & 8: AUTOMATIC EXTRINSIC CALIBRATION & MULTI-SENSOR SPATIAL FUSION MODAL
+    // ==========================================
+    Dialog {
+        id: multiSensorFusionDialog
+        modal: true
+        width: 820
+        height: 620
+        anchors.centerIn: parent
+        padding: 0
+
+        property double selectedVoxelLeaf: 0.025
+        property bool transferRgb: true
+        property bool diagRoleColors: false
+
+        background: Rectangle {
+            color: "#0A0A0E"
+            radius: 10
+            border.color: "#B89D64"
+            border.width: 1.5
+        }
+
+        contentItem: ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 20
+            spacing: 14
+
+            // Header
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 12
+                Text { text: "🔗"; font.pixelSize: 20 }
+                ColumnLayout {
+                    spacing: 2
+                    Text {
+                        text: "Multi-Sensor Extrinsic Calibration & Spatial Fusion (M7 & M8)"
+                        color: "#F4F4F6"
+                        font.pixelSize: 16
+                        font.bold: true
+                    }
+                    Text {
+                        text: "Automatic rigid extrinsic calibration (Trajectory Umeyama + FPFH/GICP) & RGB-to-LiDAR spatial fusion"
+                        color: "#A1A1AA"
+                        font.pixelSize: 11
+                    }
+                }
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: "✕ Close"
+                    onClicked: multiSensorFusionDialog.close()
+                    contentItem: Text { text: parent.text; color: "#D4D4D8"; font.pixelSize: 11; horizontalAlignment: Text.AlignHCenter }
+                    background: Rectangle { color: "#121217"; radius: 6; border.color: "#2A2A34" }
+                }
+            }
+
+            Rectangle { Layout.fillWidth: true; height: 1; color: "#121217" }
+
+            // Milestone 7: Extrinsic Calibration Panel
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: calCol.implicitHeight + 24
+                color: "#121217"
+                radius: 8
+                border.color: "#2A2A34"
+
+                ColumnLayout {
+                    id: calCol
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 10
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text {
+                            text: "1. RIGID MULTI-SENSOR EXTRINSIC CALIBRATION (M7)"
+                            color: "#f59e0b"
+                            font.pixelSize: 11
+                            font.bold: true
+                            font.letterSpacing: 0.8
+                        }
+                        Item { Layout.fillWidth: true }
+                        Rectangle {
+                            radius: 4
+                            color: "#0A0A0E"
+                            border.color: bridge.extrinsicCalibrationStatus.indexOf("VALIDATED") === 0 ? "#10b981" : "#2A2A34"
+                            implicitHeight: 22
+                            implicitWidth: calBadgeTxt.contentWidth + 14
+                            Text {
+                                id: calBadgeTxt
+                                anchors.centerIn: parent
+                                text: bridge.extrinsicCalibrationStatus
+                                color: bridge.extrinsicCalibrationStatus.indexOf("VALIDATED") === 0 ? "#10b981" : "#f59e0b"
+                                font.pixelSize: 10
+                                font.bold: true
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 50
+                            color: "#0A0A0E"
+                            radius: 6
+                            border.color: "#121217"
+                            ColumnLayout {
+                                anchors.centerIn: parent
+                                spacing: 2
+                                Text { text: "CALIBRATION RMSE"; color: "#8E8E99"; font.pixelSize: 9; font.bold: true }
+                                Text {
+                                    text: bridge.extrinsicRmseMm > 0 ? (bridge.extrinsicRmseMm.toFixed(1) + " mm") : "--"
+                                    color: "#10b981"
+                                    font.pixelSize: 14
+                                    font.bold: true
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 50
+                            color: "#0A0A0E"
+                            radius: 6
+                            border.color: "#121217"
+                            ColumnLayout {
+                                anchors.centerIn: parent
+                                spacing: 2
+                                Text { text: "SPATIAL OVERLAP"; color: "#8E8E99"; font.pixelSize: 9; font.bold: true }
+                                Text {
+                                    text: bridge.extrinsicOverlapPercent > 0 ? (bridge.extrinsicOverlapPercent.toFixed(1) + "%") : "--"
+                                    color: "#D4BE8D"
+                                    font.pixelSize: 14
+                                    font.bold: true
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 50
+                            color: "#0A0A0E"
+                            radius: 6
+                            border.color: "#121217"
+                            ColumnLayout {
+                                anchors.centerIn: parent
+                                spacing: 2
+                                Text { text: "CONFIDENCE"; color: "#8E8E99"; font.pixelSize: 9; font.bold: true }
+                                Text {
+                                    text: bridge.extrinsicConfidence > 0 ? ((bridge.extrinsicConfidence * 100).toFixed(1) + "%") : "--"
+                                    color: "#D4BE8D"
+                                    font.pixelSize: 14
+                                    font.bold: true
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: bridge.extrinsicTransformSummary
+                        color: "#D4D4D8"
+                        font.pixelSize: 11
+                        font.family: "Monospace"
+                        wrapMode: Text.WordWrap
+                    }
+
+                    Button {
+                        id: runExtrinsicCalBtn
+                        Layout.fillWidth: true
+                        implicitHeight: 36
+                        text: "📐 Calibrate Active Scanner Extrinsics & Persist Provenance (M7)"
+                        onClicked: {
+                            bridge.calibrateActiveScannerExtrinsics();
+                            canvas3d.requestPaint();
+                            canvas2d.requestPaint();
+                        }
+                        contentItem: Text {
+                            text: parent.text
+                            color: "white"
+                            font.pixelSize: 12
+                            font.bold: true
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: Rectangle {
+                            color: parent.hovered ? "#d97706" : "#FBBF24"
+                            radius: 6
+                            border.color: "#f59e0b"
+                        }
+                    }
+                }
+            }
+
+            // Milestone 8: Multi-Sensor Spatial Fusion Panel
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                color: "#121217"
+                radius: 8
+                border.color: "#2A2A34"
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 10
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text {
+                            text: "2. MULTI-SENSOR SPATIAL FUSION & RGB PROJECTION (M8)"
+                            color: "#D4BE8D"
+                            font.pixelSize: 11
+                            font.bold: true
+                            font.letterSpacing: 0.8
+                        }
+                        Item { Layout.fillWidth: true }
+                        Text {
+                            text: bridge.isFusionActive ? ("FUSED ACTIVE: " + bridge.fusedPointCount + " pts (" + bridge.fusedColorizedPoints + " RGB)") : "Unfused"
+                            color: bridge.isFusionActive ? "#10b981" : "#A1A1AA"
+                            font.pixelSize: 11
+                            font.bold: true
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 16
+
+                        RowLayout {
+                            spacing: 6
+                            Text { text: "Voxel Leaf:"; color: "#D4D4D8"; font.pixelSize: 11 }
+                            Repeater {
+                                model: [0.015, 0.025, 0.05]
+                                delegate: Button {
+                                    text: (modelData * 100).toFixed(1) + " cm"
+                                    implicitHeight: 26
+                                    onClicked: multiSensorFusionDialog.selectedVoxelLeaf = modelData
+                                    contentItem: Text { text: parent.text; color: Math.abs(multiSensorFusionDialog.selectedVoxelLeaf - modelData) < 0.001 ? "#09090B" : "#14141A"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter }
+                                    background: Rectangle {
+                                        color: Math.abs(multiSensorFusionDialog.selectedVoxelLeaf - modelData) < 0.001 ? "#B89D64" : "#121217"
+                                        radius: 4
+                                        border.color: "#B89D64"
+                                    }
+                                }
+                            }
+                        }
+
+                        CheckBox {
+                            checked: multiSensorFusionDialog.transferRgb
+                            onToggled: multiSensorFusionDialog.transferRgb = checked
+                            contentItem: Text { text: "Project Optical RGB onto LiDAR"; color: "#D4D4D8"; font.pixelSize: 11; leftPadding: 24 }
+                        }
+
+                        CheckBox {
+                            checked: multiSensorFusionDialog.diagRoleColors
+                            onToggled: multiSensorFusionDialog.diagRoleColors = checked
+                            contentItem: Text { text: "Diagnostic Sensor Colors"; color: "#D4D4D8"; font.pixelSize: 11; leftPadding: 24 }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        color: "#0A0A0E"
+                        radius: 6
+                        border.color: "#121217"
+                        Text {
+                            anchors.fill: parent
+                            anchors.margins: 10
+                            text: bridge.fusionStatus
+                            color: "#D4BE8D"
+                            font.pixelSize: 11
+                            font.family: "Monospace"
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+
+                        Button {
+                            Layout.fillWidth: true
+                            implicitHeight: 38
+                            text: "🔗 Fuse Active Multi-Sensor Maps (M8)"
+                            onClicked: {
+                                bridge.fuseActiveMultiSensorMaps(
+                                    multiSensorFusionDialog.selectedVoxelLeaf,
+                                    multiSensorFusionDialog.transferRgb,
+                                    multiSensorFusionDialog.diagRoleColors
+                                );
+                                canvas3d.requestPaint();
+                                canvas2d.requestPaint();
+                            }
+                            contentItem: Text { text: parent.text; color: "white"; font.pixelSize: 12; font.bold: true; horizontalAlignment: Text.AlignHCenter }
+                            background: Rectangle { color: parent.hovered ? "#B89D64" : "#9A804D"; radius: 6; border.color: "#B89D64" }
+                        }
+
+                        Button {
+                            Layout.fillWidth: true
+                            implicitHeight: 38
+                            enabled: bridge.isFusionActive
+                            text: "💾 Save Fused Map to Project"
+                            onClicked: {
+                                bridge.saveFusedMapToProject();
+                                canvas3d.requestPaint();
+                                canvas2d.requestPaint();
+                            }
+                            contentItem: Text { text: parent.text; color: parent.enabled ? "white" : "#8E8E99"; font.pixelSize: 12; font.bold: true; horizontalAlignment: Text.AlignHCenter }
+                            background: Rectangle { color: parent.enabled ? (parent.hovered ? "#059669" : "#34D399") : "#121217"; radius: 6; border.color: parent.enabled ? "#10b981" : "#2A2A34" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ==========================================
+    // MILESTONE 12: POINT CLOUD CLEANUP, POST-PROCESSING & EXPORT MODAL
+    // ==========================================
+    Dialog {
+        id: cleanupExportDialog
+        modal: true
+        width: 840
+        height: 660
+        anchors.centerIn: parent
+        padding: 0
+
+        property bool useVoxel: true
+        property double voxelLeaf: 0.02
+        property bool useSor: true
+        property int sorMeanK: 20
+        property double sorStdMul: 1.5
+        property bool useRor: false
+        property double rorRadius: 0.15
+        property int rorMinNeighbors: 3
+        property bool alignGround: true
+        property bool removeGround: false
+        property string exportFormat: "ply"
+        property bool exportBinary: true
+
+        background: Rectangle {
+            color: "#0A0A0E"
+            radius: 10
+            border.color: "#22c55e"
+            border.width: 1.5
+        }
+
+        contentItem: ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 20
+            spacing: 12
+
+            // Header
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 12
+                Text { text: "✨"; font.pixelSize: 20 }
+                ColumnLayout {
+                    spacing: 2
+                    Text {
+                        text: "Point Cloud Cleanup, Post-Processing & Export (M12)"
+                        color: "#F4F4F6"
+                        font.pixelSize: 16
+                        font.bold: true
+                    }
+                    Text {
+                        text: "Statistical & Radius Outlier Removal, Voxel Downsampling, RANSAC Ground Plane Z=0 Alignment & Multi-Format Export"
+                        color: "#A1A1AA"
+                        font.pixelSize: 11
+                    }
+                }
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: "✕ Close"
+                    onClicked: cleanupExportDialog.close()
+                    contentItem: Text { text: parent.text; color: "#D4D4D8"; font.pixelSize: 11; horizontalAlignment: Text.AlignHCenter }
+                    background: Rectangle { color: "#121217"; radius: 6; border.color: "#2A2A34" }
+                }
+            }
+
+            Rectangle { Layout.fillWidth: true; height: 1; color: "#121217" }
+
+            // Cleanup Pipeline Panel
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: cleanCol.implicitHeight + 24
+                color: "#121217"
+                radius: 8
+                border.color: "#2A2A34"
+
+                ColumnLayout {
+                    id: cleanCol
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 10
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text {
+                            text: "1. POINT CLOUD FILTERING & GROUND ALIGNMENT PIPELINE"
+                            color: "#34D399"
+                            font.pixelSize: 11
+                            font.bold: true
+                            font.letterSpacing: 0.8
+                        }
+                        Item { Layout.fillWidth: true }
+                        Text {
+                            text: bridge.hasCleanupPreview ? ("PREVIEW ACTIVE: " + bridge.cleanupInputPoints + " → " + bridge.cleanupOutputPoints + " pts (-" + bridge.cleanupRemovedPoints + ")") : ("Raw Cloud: " + bridge.pointsCaptured + " pts")
+                            color: bridge.hasCleanupPreview ? "#34D399" : "#A1A1AA"
+                            font.pixelSize: 11
+                            font.bold: true
+                        }
+                    }
+
+                    // Real-Time M12 Capture Stream Filter Bar
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 36
+                        color: "#07170F"
+                        radius: 6
+                        border.color: bridge.liveCleanupEnabled ? "#22c55e" : "#121217"
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 10
+                            anchors.rightMargin: 10
+                            spacing: 12
+
+                            CheckBox {
+                                checked: bridge.liveCleanupEnabled
+                                onToggled: bridge.setLiveCleanupEnabled(checked)
+                                contentItem: Text {
+                                    text: "⚡ Real-Time M12 Cleanup During Capture (10 Hz O(N) Spatial Hash)"
+                                    color: "#34D399"
+                                    font.pixelSize: 11
+                                    font.bold: true
+                                    leftPadding: 24
+                                }
+                            }
+
+                            CheckBox {
+                                enabled: bridge.liveCleanupEnabled
+                                checked: bridge.liveGroundLockEnabled
+                                onToggled: bridge.setLiveGroundLockEnabled(checked)
+                                contentItem: Text {
+                                    text: "Live Floor Z=0 Lock"
+                                    color: bridge.liveCleanupEnabled ? "#D4BE8D" : "#8E8E99"
+                                    font.pixelSize: 11
+                                    font.bold: true
+                                    leftPadding: 24
+                                }
+                            }
+
+                            Item { Layout.fillWidth: true }
+
+                            Text {
+                                text: bridge.liveCleanupEnabled
+                                      ? ("Live Filter Latency: " + bridge.liveCleanupTimeMs.toFixed(2) + " ms / tick")
+                                      : "Live Filter Paused"
+                                color: "#34D399"
+                                font.pixelSize: 10
+                                font.family: "Monospace"
+                                font.bold: true
+                            }
+                        }
+                    }
+
+                    // Filter Toggles Row 1
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 12
+
+                        CheckBox {
+                            checked: cleanupExportDialog.useVoxel
+                            onToggled: cleanupExportDialog.useVoxel = checked
+                            contentItem: Text { text: "Voxel Downsample (" + (cleanupExportDialog.voxelLeaf * 100).toFixed(1) + " cm)"; color: "#F4F4F6"; font.pixelSize: 11; leftPadding: 24 }
+                        }
+
+                        Repeater {
+                            model: [0.01, 0.02, 0.05]
+                            delegate: Button {
+                                text: (modelData * 100).toFixed(0) + "cm"
+                                implicitHeight: 24
+                                onClicked: cleanupExportDialog.voxelLeaf = modelData
+                                contentItem: Text { text: parent.text; color: Math.abs(cleanupExportDialog.voxelLeaf - modelData) < 0.001 ? "#09090B" : "#14141A"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter }
+                                background: Rectangle {
+                                    color: Math.abs(cleanupExportDialog.voxelLeaf - modelData) < 0.001 ? "#B89D64" : "#121217"
+                                    radius: 4
+                                    border.color: "#B89D64"
+                                }
+                            }
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        CheckBox {
+                            checked: cleanupExportDialog.useSor
+                            onToggled: cleanupExportDialog.useSor = checked
+                            contentItem: Text { text: "SOR Statistical Filter (K=" + cleanupExportDialog.sorMeanK + ", σ=" + cleanupExportDialog.sorStdMul.toFixed(1) + ")"; color: "#F4F4F6"; font.pixelSize: 11; leftPadding: 24 }
+                        }
+                    }
+
+                    // Filter Toggles Row 2
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 12
+
+                        CheckBox {
+                            checked: cleanupExportDialog.useRor
+                            onToggled: cleanupExportDialog.useRor = checked
+                            contentItem: Text { text: "ROR Radius Filter (r=" + cleanupExportDialog.rorRadius.toFixed(2) + "m, min=" + cleanupExportDialog.rorMinNeighbors + ")"; color: "#F4F4F6"; font.pixelSize: 11; leftPadding: 24 }
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        CheckBox {
+                            checked: cleanupExportDialog.alignGround
+                            onToggled: cleanupExportDialog.alignGround = checked
+                            contentItem: Text { text: "RANSAC Level Ground (Z=0)"; color: "#D4BE8D"; font.pixelSize: 11; font.bold: true; leftPadding: 24 }
+                        }
+
+                        CheckBox {
+                            checked: cleanupExportDialog.removeGround
+                            onToggled: cleanupExportDialog.removeGround = checked
+                            contentItem: Text { text: "Strip Floor Points"; color: "#f59e0b"; font.pixelSize: 11; leftPadding: 24 }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 44
+                        color: "#0A0A0E"
+                        radius: 6
+                        border.color: "#121217"
+                        Text {
+                            anchors.fill: parent
+                            anchors.margins: 8
+                            text: bridge.cleanupStatus
+                            color: "#34D399"
+                            font.pixelSize: 11
+                            font.family: "Monospace"
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+
+                        Button {
+                            Layout.fillWidth: true
+                            implicitHeight: 36
+                            text: "⚡ Run Cleanup Preview"
+                            onClicked: {
+                                bridge.runPointCloudCleanup(
+                                    cleanupExportDialog.useVoxel,
+                                    cleanupExportDialog.voxelLeaf,
+                                    cleanupExportDialog.useSor,
+                                    cleanupExportDialog.sorMeanK,
+                                    cleanupExportDialog.sorStdMul,
+                                    cleanupExportDialog.useRor,
+                                    cleanupExportDialog.rorRadius,
+                                    cleanupExportDialog.rorMinNeighbors,
+                                    cleanupExportDialog.alignGround,
+                                    cleanupExportDialog.removeGround
+                                );
+                                canvas3d.requestPaint();
+                                canvas2d.requestPaint();
+                            }
+                            contentItem: Text { text: parent.text; color: "white"; font.pixelSize: 12; font.bold: true; horizontalAlignment: Text.AlignHCenter }
+                            background: Rectangle { color: parent.hovered ? "#16a34a" : "#4ADE80"; radius: 6; border.color: "#22c55e" }
+                        }
+
+                        Button {
+                            implicitWidth: 140
+                            implicitHeight: 36
+                            enabled: bridge.hasCleanupPreview
+                            text: "↩ Reset to Raw"
+                            onClicked: {
+                                bridge.resetPointCloudCleanup();
+                                canvas3d.requestPaint();
+                                canvas2d.requestPaint();
+                            }
+                            contentItem: Text { text: parent.text; color: parent.enabled ? "#F4F4F6" : "#8E8E99"; font.pixelSize: 11; font.bold: true; horizontalAlignment: Text.AlignHCenter }
+                            background: Rectangle { color: "#121217"; radius: 6; border.color: "#2A2A34" }
+                        }
+
+                        Button {
+                            Layout.fillWidth: true
+                            implicitHeight: 36
+                            enabled: bridge.hasCleanupPreview
+                            text: "💾 Commit Cleaned Cloud to Project"
+                            onClicked: {
+                                bridge.commitCleanedPointCloud();
+                                canvas3d.requestPaint();
+                                canvas2d.requestPaint();
+                            }
+                            contentItem: Text { text: parent.text; color: parent.enabled ? "white" : "#8E8E99"; font.pixelSize: 12; font.bold: true; horizontalAlignment: Text.AlignHCenter }
+                            background: Rectangle { color: parent.enabled ? (parent.hovered ? "#B89D64" : "#9A804D") : "#121217"; radius: 6; border.color: parent.enabled ? "#B89D64" : "#2A2A34" }
+                        }
+                    }
+                }
+            }
+
+            // Export Panel (.ply, .pcd, .xyz, .obj Mesh)
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                color: "#121217"
+                radius: 8
+                border.color: "#2A2A34"
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 10
+
+                    Text {
+                        text: "2. ONE-CLICK SPATIAL EXPORT (.PLY / .PCD / .XYZ / .OBJ SURFACE MESH)"
+                        color: "#D4BE8D"
+                        font.pixelSize: 11
+                        font.bold: true
+                        font.letterSpacing: 0.8
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        Text { text: "Format:"; color: "#D4D4D8"; font.pixelSize: 11 }
+                        Repeater {
+                            model: [
+                                { fmt: "ply", label: "PLY (Point Cloud)" },
+                                { fmt: "pcd", label: "PCD (PCL Native)" },
+                                { fmt: "xyz", label: "XYZ (ASCII RGB)" },
+                                { fmt: "obj", label: "OBJ (3D Surface Mesh)" }
+                            ]
+                            delegate: Button {
+                                text: modelData.label
+                                implicitHeight: 28
+                                onClicked: {
+                                    cleanupExportDialog.exportFormat = modelData.fmt;
+                                    exportPathInput.text = "/home/scanar/av_scan/exports/" + (bridge.projectId !== "" ? bridge.projectId : "scan_export") + "." + modelData.fmt;
+                                }
+                                contentItem: Text { text: parent.text; color: cleanupExportDialog.exportFormat === modelData.fmt ? "#09090B" : "#14141A"; font.pixelSize: 11; font.bold: cleanupExportDialog.exportFormat === modelData.fmt; horizontalAlignment: Text.AlignHCenter }
+                                background: Rectangle {
+                                    color: cleanupExportDialog.exportFormat === modelData.fmt ? "#B89D64" : "#121217"
+                                    radius: 5
+                                    border.color: cleanupExportDialog.exportFormat === modelData.fmt ? "#B89D64" : "#2A2A34"
+                                }
+                            }
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        CheckBox {
+                            visible: cleanupExportDialog.exportFormat === "ply" || cleanupExportDialog.exportFormat === "pcd"
+                            checked: cleanupExportDialog.exportBinary
+                            onToggled: cleanupExportDialog.exportBinary = checked
+                            contentItem: Text { text: "Binary Encoding"; color: "#D4D4D8"; font.pixelSize: 11; leftPadding: 24 }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Text { text: "Output File:"; color: "#D4D4D8"; font.pixelSize: 11 }
+                        TextField {
+                            id: exportPathInput
+                            Layout.fillWidth: true
+                            text: "/home/scanar/av_scan/exports/" + (bridge.projectId !== "" ? bridge.projectId : "scan_export") + "." + cleanupExportDialog.exportFormat
+                            color: "#F4F4F6"
+                            font.family: "Monospace"
+                            font.pixelSize: 11
+                            background: Rectangle { color: "#0A0A0E"; radius: 6; border.color: "#2A2A34" }
+                        }
+                        Button {
+                            implicitWidth: 180
+                            implicitHeight: 34
+                            text: "📤 Export Active Cloud"
+                            onClicked: {
+                                var fmtArg = cleanupExportDialog.exportFormat;
+                                if (fmtArg === "ply" || fmtArg === "pcd") {
+                                    fmtArg = fmtArg + (cleanupExportDialog.exportBinary ? "_binary" : "_ascii");
+                                }
+                                bridge.exportActivePointCloud(
+                                    fmtArg,
+                                    exportPathInput.text,
+                                    0.04
+                                );
+                            }
+                            contentItem: Text { text: parent.text; color: "white"; font.pixelSize: 12; font.bold: true; horizontalAlignment: Text.AlignHCenter }
+                            background: Rectangle { color: parent.hovered ? "#B89D64" : "#9A804D"; radius: 6; border.color: "#B89D64" }
+                        }
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: bridge.lastExportPath !== "" ? (bridge.exportStatus + " → " + bridge.lastExportPath) : bridge.exportStatus
+                        color: "#A1A1AA"
+                        font.pixelSize: 10
+                        font.family: "Monospace"
+                        elide: Text.ElideMiddle
+                    }
                 }
             }
         }
@@ -7453,16 +8277,16 @@ ApplicationWindow {
     Popup {
         id: toastPopup
         anchors.centerIn: parent
-        width: 360
+        width: 380
         height: 76
         modal: false
         focus: false
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
         background: Rectangle {
-            color: "#1e293b"
-            radius: 8
-            border.color: "#38bdf8"
+            color: "#0A0A0E"
+            radius: 12
+            border.color: "#B89D64"
             border.width: 1.5
         }
 
@@ -7474,7 +8298,7 @@ ApplicationWindow {
             spacing: 4
             Text {
                 text: toastPopup.toastTitle
-                color: "#38bdf8"
+                color: "#D4BE8D"
                 font.bold: true
                 font.pixelSize: 13
                 horizontalAlignment: Text.AlignHCenter
@@ -7482,7 +8306,7 @@ ApplicationWindow {
             }
             Text {
                 text: toastPopup.toastMessage
-                color: "#e2e8f0"
+                color: "#F4F4F6"
                 font.pixelSize: 11
                 horizontalAlignment: Text.AlignHCenter
                 Layout.alignment: Qt.AlignHCenter
@@ -7509,6 +8333,247 @@ ApplicationWindow {
             toastPopup.toastMessage = message;
             toastPopup.open();
             toastTimer.restart();
+        }
+    }
+
+
+    // =========================================================================
+    // 5. ARTIFICIAL VISION APPLE GLASS SPLASH SCREEN
+    // Exact replica of scanarMini ArtificialVisionSplashScreen (560x380 card)
+    // =========================================================================
+    Item {
+        id: splashOverlay
+        anchors.fill: parent
+        z: 9999
+        visible: root.showSplashScreen
+        opacity: 1.0
+
+        property real loadProgress: 0.0
+
+        Behavior on opacity {
+            NumberAnimation {
+                duration: 420
+                easing.type: Easing.InOutQuad
+            }
+        }
+
+        NumberAnimation {
+            id: splashProgressAnim
+            target: splashOverlay
+            property: "loadProgress"
+            from: 0.0
+            to: 1.0
+            duration: 1650
+            easing.type: Easing.OutCubic
+            running: root.showSplashScreen
+        }
+
+        Timer {
+            id: splashFadeTimer
+            interval: 1750
+            running: root.showSplashScreen
+            repeat: false
+            onTriggered: {
+                splashOverlay.opacity = 0.0;
+                splashHideTimer.start();
+            }
+        }
+
+        Timer {
+            id: splashHideTimer
+            interval: 440
+            repeat: false
+            onTriggered: {
+                root.showSplashScreen = false;
+            }
+        }
+
+        // Click anywhere outside or inside to dismiss early
+        MouseArea {
+            anchors.fill: parent
+            onClicked: {
+                splashFadeTimer.stop();
+                splashOverlay.opacity = 0.0;
+                splashHideTimer.start();
+            }
+        }
+
+        // Centered 560x380 Translucent Apple Glass Splash Card (matches scanarMini)
+        Rectangle {
+            id: splashCard
+            width: 560
+            height: 380
+            anchors.centerIn: parent
+            radius: 20
+            color: "#38121218" // Translucent dark glass backdrop
+            border.color: "#B0BAA164" // rgba(186, 161, 100, 175) 1.5px Champagne Gold outer border
+            border.width: 1.5
+
+            // Inner White Glass Refraction Rim (inset by 1.5px)
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: 1.5
+                radius: 18.5
+                color: "transparent"
+                border.color: "#40FFFFFF" // rgba(255, 255, 255, 64)
+                border.width: 1
+            }
+
+            // Concentric LiDAR Horizon Rings & Champagne Gold Halo (matches SplashLogoCanvas)
+            Canvas {
+                id: splashRingsCanvas
+                anchors.fill: parent
+                onPaint: {
+                    var ctx = getContext("2d");
+                    ctx.clearRect(0, 0, width, height);
+                    var cx = width * 0.5;
+                    var cy = 112;
+
+                    // Subtle concentric LiDAR horizon rings
+                    var radii = [48, 72, 96, 120];
+                    for (var i = 0; i < radii.length; ++i) {
+                        ctx.strokeStyle = "rgba(186, 161, 100, " + ((24 - i * 5) / 255.0).toFixed(3) + ")";
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, radii[i], 0, Math.PI * 2);
+                        ctx.stroke();
+                    }
+
+                    // Soft radial champagne gold halo behind the logo
+                    var grad = ctx.createRadialGradient(cx, cy, 4, cx, cy, 68);
+                    grad.addColorStop(0.0, "rgba(186, 161, 100, 0.24)");
+                    grad.addColorStop(0.55, "rgba(255, 255, 255, 0.06)");
+                    grad.addColorStop(1.0, "rgba(0, 0, 0, 0.0)");
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, 68, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            // Top Centered Champagne Gold Pill Highlight (104x3px)
+            Rectangle {
+                width: 104
+                height: 3
+                radius: 1.5
+                color: root.avGoldPrimary
+                anchors.top: parent.top
+                anchors.topMargin: 12
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+
+            // Top-Right Close Button (✕, 28x28, radius 14)
+            Button {
+                id: splashCloseBtn
+                width: 28
+                height: 28
+                anchors.top: parent.top
+                anchors.topMargin: 14
+                anchors.right: parent.right
+                anchors.rightMargin: 16
+                onClicked: {
+                    splashFadeTimer.stop();
+                    splashOverlay.opacity = 0.0;
+                    splashHideTimer.start();
+                }
+                contentItem: Text {
+                    text: "✕"
+                    color: root.avWhiteWarm
+                    font.pixelSize: 13
+                    font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                background: Rectangle {
+                    radius: 14
+                    color: splashCloseBtn.hovered ? "#70EF4444" : "#1AFFFFFF"
+                    border.color: splashCloseBtn.hovered ? "#F87171" : "#4DFFFFFF"
+                    border.width: 1
+                }
+            }
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.topMargin: 38
+                anchors.bottomMargin: 28
+                anchors.leftMargin: 36
+                anchors.rightMargin: 36
+                spacing: 8
+
+                // Artificial Vision Brand Logo (transparent PNG)
+                Item {
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: 132
+                    Layout.preferredHeight: 132
+
+                    Image {
+                        anchors.fill: parent
+                        source: "assets/av_logo.png"
+                        fillMode: Image.PreserveAspectFit
+                        smooth: true
+                        mipmap: true
+                    }
+                }
+
+                // Brand Pill: "VERIFY  ·  DIRECT  ·  CLARIFY"
+                Text {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: "VERIFY  ·  DIRECT  ·  CLARIFY"
+                    color: root.avGoldBright
+                    font.pixelSize: 11
+                    font.bold: true
+                    font.letterSpacing: 3.5
+                }
+
+                // Product Title: "AV Scan"
+                Text {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: "AV Scan"
+                    color: root.avWhiteWarm
+                    font.pixelSize: 28
+                    font.weight: Font.DemiBold
+                    font.letterSpacing: 1.0
+                }
+
+                // Product Attribution: "an Artificial Vision product"
+                Text {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: "an Artificial Vision product"
+                    color: "#DCFCFBF8"
+                    font.pixelSize: 13
+                    font.letterSpacing: 0.6
+                }
+
+                Item { Layout.fillHeight: true }
+
+                // 380x4px Champagne Gold Progress Bar
+                Rectangle {
+                    Layout.alignment: Qt.AlignHCenter
+                    width: 380
+                    height: 4
+                    radius: 2
+                    color: "#24FFFFFF"
+
+                    Rectangle {
+                        width: parent.width * splashOverlay.loadProgress
+                        height: parent.height
+                        radius: 2
+                        color: root.avGoldPrimary
+                    }
+                }
+
+                // Status Caption
+                Text {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: splashOverlay.loadProgress < 0.45
+                        ? "Initializing Spatial Compute Engine & Apple Glass AR HUD..."
+                        : (splashOverlay.loadProgress < 0.85
+                            ? "Loading Multi-Sensor Profiles & C-SLAM Mesh..."
+                            : "Ready — Launching Clear AR Passthrough Workspace...")
+                    color: root.avGoldBright
+                    font.pixelSize: 11
+                }
+            }
         }
     }
 }

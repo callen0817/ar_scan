@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "config_id": "scanar",
+  "name": "scanAR",
+  "scanner_node_id": "scanar-01",
+  "sensor_instances": [
+    "robosense_airy_01",
+    "orbbec_gemini_336l_01"
+  ],
+  "extrinsic_status": "VALIDATED",
+  "relationship_type": "RIGID",
+  "relative_transforms": {
+    "robosense_airy_01<-orbbec_gemini_336l_01": {
+      "source_frame": "orbbec_gemini_336l_01",
+      "target_frame": "robosense_airy_01",
+      "matrix": [
+        [ 0.114685, -0.975492, -0.187784,  0.004 ],
+        [ 0.618782,  0.218029, -0.754700,  0.168 ],
+        [ 0.777146, -0.029645,  0.628622, -0.017 ],
+        [ 0.0,       0.0,       0.0,       1.0   ]
+      ]
+    }
+  },
+  "method": "EMPIRICAL_ROOM_REGISTRATION_4DOF_GICP",
+  "confidence": 0.998,
+  "supporting_captures": [
+    "cap_1789676064983_airy",
+    "cap_1789676064983_gemini"
+  ],
+  "residual_error_stats": {
+    "rmse_m": 0.0484,
+    "inlier_fraction_35cm": 0.998,
+    "inlier_fraction_15cm": 0.978,
+    "architecture": "scanarMini project — Airy LiDAR + Internal Airy 6-DoF IMU + Gemini 336L Stereo Camera (RGB Colorization + Enhanced Short-Range Dense Stereo Cloud)"
+  },
+  "sensor_serials": [
+    "AIRY-2024-99812",
+    "CPC6463000XW"
+  ],
+  "firmware": [
+    "3.1.20",
+    "1.4.60"
+  ],
+  "validation_date": "2026-10-17",
+  "validation_history": [
+    "scanAR profile for scanarMini project: combines RoboSense Airy (32-beam LiDAR + internal 200Hz 6-DoF IMU) with Orbbec Gemini 336L stereo camera for optical RGB colorization and enhanced short-range dense stereo cloud scanning."
+  ],
+  "provenance": {
+    "schema_version": 1,
+    "value": "SCANAR_MINI_CALIBRATED_RIG",
+    "source": "PHYSICAL_HARDWARE",
+    "confidence": 0.998,
+    "device_serial": "AIRY-2024-99812+CPC6463000XW",
+    "firmware": "3.1.20 / 1.4.60",
+    "evidence": "scanarMini scanAR calibrated hybrid LiDAR-Inertial + Stereo RGB-D scanner configuration",
+    "validated": true
+  }
+}

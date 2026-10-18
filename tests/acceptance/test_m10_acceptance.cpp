@@ -26,11 +26,13 @@
 #include "core/multi_node/discovery_service.hpp"
 #include "core/multi_node/coordination_service.hpp"
 #include "core/multi_node/multi_node_session_orchestrator.hpp"
+#include "core/fusion/multi_sensor_fusion_engine.hpp"
 
 namespace fs = std::filesystem;
 using namespace av::core;
 using namespace av::core::schemas;
 using namespace av::core::multi_node;
+using namespace av::core::fusion;
 
 #define CHECK(condition, message) \
     do { \
@@ -459,13 +461,224 @@ int main(int argc, char* argv[]) {
 
     std::cout << "  ✓ Capture A owner: " << cap_node_a.owner_node_uuid() << std::endl;
     std::cout << "  ✓ Capture B owner: " << cap_node_b.owner_node_uuid() << std::endl;
-    std::cout << "  ✓ Strict spatial segregation confirmed (M10 coordinates nodes, does NOT fuse point clouds)" << std::endl;
+    std::cout << "  ✓ Strict spatial segregation confirmed (each capture retains distinct owner UUID)" << std::endl;
+
+    // -------------------------------------------------------------------------
+    // Gate 8: scanAR (scanarMini) Profile & Unlimited Multi-Scanner C-SLAM
+    // -------------------------------------------------------------------------
+    std::cout << "\n[Gate 8: scanAR Profile & Unlimited Multi-Scanner Real-Time C-SLAM]" << std::endl;
+    {
+        auto repo_storage = std::make_shared<storage::StorageEngine>();
+        fs::path repo_root = fs::current_path();
+        while (repo_root.has_parent_path() && repo_root != repo_root.parent_path() &&
+               !fs::exists(repo_root / "profiles" / "validated" / "scanar_profile.json")) {
+            repo_root = repo_root.parent_path();
+        }
+        repo_storage->initialize(repo_root.string());
+
+        DeviceProfile scanar_prof;
+        bool loaded_prof = repo_storage->loadDeviceProfile("scanar_01", scanar_prof);
+        CHECK(loaded_prof, "Failed to load validated scanAR profile (scanar_01)");
+        CHECK(scanar_prof.model() == "scanAR", "scanAR profile model mismatch");
+        CHECK(scanar_prof.manufacturer() == "scanarMini", "scanAR profile manufacturer mismatch");
+        CHECK(scanar_prof.profile_status() == ProfileStatus::VALIDATED, "scanAR profile must be VALIDATED");
+
+        ScannerConfig scanar_cfg;
+        bool loaded_cfg = repo_storage->loadScannerConfig("scanar", scanar_cfg);
+        CHECK(loaded_cfg, "Failed to load scanAR scanner config (scanar)");
+        CHECK(scanar_cfg.name() == "scanAR", "scanAR scanner config name mismatch");
+        CHECK(scanar_cfg.sensor_instances().size() == 2, "scanAR config must contain Airy + Gemini 336L");
+        std::cout << "  ✓ Verified scanAR (scanarMini) profile & config: Airy (Internal IMU) + Gemini 336L Stereo RGB-D" << std::endl;
+
+        // Test C-SLAM Engine with 4 simultaneous scanners (Anchor + 2 Separated IMU + 1 Overlapping)
+        CSlamEngine cslam;
+
+        // Create Anchor room geometry (L-shaped corner walls + floor)
+        std::vector<PointXYZI> anchor_cloud;
+        for (int ix = -20; ix <= 20; ++ix) {
+            for (int iy = -20; iy <= 20; ++iy) {
+                PointXYZI p{};
+                p.x = ix * 0.10f; p.y = iy * 0.10f; p.z = 0.0f;
+                p.intensity = 100.0f; p.r = 180; p.g = 180; p.b = 180;
+                anchor_cloud.push_back(p);
+            }
+        }
+        for (int i = -20; i <= 20; ++i) {
+            for (int iz = 0; iz <= 18; ++iz) {
+                PointXYZI w1{};
+                w1.x = i * 0.10f; w1.y = 2.0f; w1.z = iz * 0.10f;
+                w1.intensity = 150.0f; w1.r = 200; w1.g = 200; w1.b = 200;
+                anchor_cloud.push_back(w1);
+
+                PointXYZI w2{};
+                w2.x = 2.0f; w2.y = i * 0.10f; w2.z = iz * 0.10f;
+                w2.intensity = 150.0f; w2.r = 200; w2.g = 200; w2.b = 200;
+                anchor_cloud.push_back(w2);
+            }
+        }
+
+        Quaternion q_ident{0.0, 0.0, 0.0, 1.0};
+        cslam.updateScannerSubmap("scanner-1-uuid", "scanAR-Alpha", anchor_cloud, {}, q_ident, false);
+
+        // Scanner 2 & Scanner 3: Non-overlapping geometry with distinct IMU yaw orientations
+        std::vector<PointXYZI> non_overlap_cloud;
+        for (int a = 0; a < 36; ++a) {
+            double theta = a * (2.0 * M_PI / 36.0);
+            for (int h = 0; h < 15; ++h) {
+                PointXYZI p{};
+                p.x = static_cast<float>(0.8 * std::cos(theta));
+                p.y = static_cast<float>(0.8 * std::sin(theta));
+                p.z = static_cast<float>(h * 0.10);
+                p.intensity = 120.0f;
+                non_overlap_cloud.push_back(p);
+            }
+        }
+        double yaw2 = 45.0 * M_PI / 180.0;
+        Quaternion q_imu2{0.0, 0.0, std::sin(yaw2 * 0.5), std::cos(yaw2 * 0.5)};
+        cslam.updateScannerSubmap("scanner-2-uuid", "scanAR-Beta", non_overlap_cloud, {}, q_imu2, false);
+
+        double yaw3 = -60.0 * M_PI / 180.0;
+        Quaternion q_imu3{0.0, 0.0, std::sin(yaw3 * 0.5), std::cos(yaw3 * 0.5)};
+        cslam.updateScannerSubmap("scanner-3-uuid", "scanAR-Gamma", non_overlap_cloud, {}, q_imu3, false);
+
+        // Scanner 4: Overlapping geometry with Anchor (shifted by 0.25m X, -0.15m Y, 10 deg yaw)
+        double yaw4 = 10.0 * M_PI / 180.0;
+        double cy4 = std::cos(yaw4), sy4 = std::sin(yaw4);
+        Quaternion q_imu4{0.0, 0.0, std::sin(yaw4 * 0.5), std::cos(yaw4 * 0.5)};
+        std::vector<PointXYZI> overlap_cloud;
+        overlap_cloud.reserve(anchor_cloud.size());
+        for (const auto& p : anchor_cloud) {
+            PointXYZI sp = p;
+            double dx = sp.x - 0.25;
+            double dy = sp.y + 0.15;
+            sp.x = static_cast<float>(cy4 * dx + sy4 * dy);
+            sp.y = static_cast<float>(-sy4 * dx + cy4 * dy);
+            overlap_cloud.push_back(sp);
+        }
+        cslam.updateScannerSubmap("scanner-4-uuid", "scanAR-Delta", overlap_cloud, {}, q_imu4, true);
+
+        CHECK(cslam.scannerCount() == 4, "Expected 4 scanners in C-SLAM engine");
+        auto nodes = cslam.getScannerNodes();
+        CHECK(nodes.size() == 4, "Expected 4 scanner nodes in C-SLAM list");
+
+        // Verify unique colors across all 4 scanners
+        for (size_t i = 0; i < nodes.size(); ++i) {
+            for (size_t j = i + 1; j < nodes.size(); ++j) {
+                bool same_color = (nodes[i].color_r == nodes[j].color_r &&
+                                   nodes[i].color_g == nodes[j].color_g &&
+                                   nodes[i].color_b == nodes[j].color_b);
+                CHECK(!same_color, "Scanners must have distinct per-scanner colors");
+            }
+        }
+        std::cout << "  ✓ All 4 scanners assigned distinct per-scanner RGB colors" << std::endl;
+
+        // Verify Anchor, Separated IMU Offset, and Overlap-Snapped states
+        CHECK(nodes[0].alignment_state == CSlamAlignmentState::ANCHOR, "Scanner 1 must be ANCHOR");
+        CHECK(nodes[1].alignment_state == CSlamAlignmentState::UNALIGNED_IMU_OFFSET, "Scanner 2 must be UNALIGNED_IMU_OFFSET");
+        CHECK(nodes[2].alignment_state == CSlamAlignmentState::UNALIGNED_IMU_OFFSET, "Scanner 3 must be UNALIGNED_IMU_OFFSET");
+        CHECK(nodes[3].alignment_state == CSlamAlignmentState::OVERLAP_LOCKED, "Scanner 4 with overlapping geometry must snap to OVERLAP_LOCKED");
+
+        // Check spatial separation distance for non-overlapping scanners (> 5 meters from origin)
+        double dist2 = std::hypot(nodes[1].T_world_from_scanner.matrix[0][3], nodes[1].T_world_from_scanner.matrix[1][3]);
+        double dist3 = std::hypot(nodes[2].T_world_from_scanner.matrix[0][3], nodes[2].T_world_from_scanner.matrix[1][3]);
+        CHECK(dist2 > 5.0, "Non-overlapping Scanner 2 must be placed at separation offset > 5m");
+        CHECK(dist3 > 5.0, "Non-overlapping Scanner 3 must be placed at separation offset > 5m");
+        std::cout << "  ✓ Non-overlapping scanners oriented by IMU and separated by " << dist2 << "m / " << dist3 << "m" << std::endl;
+        std::cout << "  ✓ Overlapping scanner automatically snapped (OVERLAP_LOCKED, overlap="
+                  << (nodes[3].overlap_ratio * 100.0) << "%, RMSE=" << (nodes[3].inlier_rmse_m * 1000.0) << "mm)" << std::endl;
+
+        auto merged = cslam.getMergedPointCloud(true);
+        size_t expected_total = anchor_cloud.size() + non_overlap_cloud.size() * 2 + overlap_cloud.size();
+        CHECK(merged.size() == expected_total, "Merged C-SLAM point cloud size mismatch");
+        std::cout << "  ✓ Real-time merged C-SLAM cloud contains all " << merged.size() << " points across 4 scanners" << std::endl;
+
+        // ---------------------------------------------------------------------
+        // Gate 9: Cross-OS / Cross-Sensor Individual & Collaborative Scanning
+        //         + Real-Time Multi-Sensor Overlap & Dynamic Anchor Failover
+        // ---------------------------------------------------------------------
+        std::cout << "\n[Gate 9: Cross-OS / Cross-Sensor C-SLAM & Dynamic Multi-Sensor Anchor Failover]" << std::endl;
+        MultiSensorFusionEngine fusion_engine;
+        MultiSensorFusionParams rt_params;
+        rt_params.voxel_leaf_size_m = 0.05f;
+        rt_params.transfer_optical_rgb_to_lidar = true;
+        rt_params.real_time_mode = true;
+        rt_params.auto_calibrate_missing = false;
+
+        // Node A (LINUX_ARM64): scanAR rig (Airy LiDAR + Gemini 336L Stereo RGB-D)
+        SensorFusionInput in_airy;
+        in_airy.sensor_id = "robosense_airy_01";
+        in_airy.sensor_role = "AIRY";
+        in_airy.cloud = anchor_cloud;
+        in_airy.is_optical_rgb_source = false;
+        in_airy.is_tracking_healthy = true;
+        in_airy.is_degraded = false;
+        in_airy.is_metric_scale_verified = true;
+        in_airy.slam_rate_hz = 20.0;
+
+        SensorFusionInput in_gemini;
+        in_gemini.sensor_id = "orbbec_gemini_336l_01";
+        in_gemini.sensor_role = "GEMINI";
+        in_gemini.cloud = anchor_cloud;
+        for (auto& pt : in_gemini.cloud) { pt.r = 40; pt.g = 210; pt.b = 120; pt.has_color = true; }
+        in_gemini.is_optical_rgb_source = true;
+        in_gemini.is_tracking_healthy = true;
+        in_gemini.is_degraded = false;
+        in_gemini.is_metric_scale_verified = true;
+        in_gemini.slam_rate_hz = 30.0;
+
+        // 1. Nominal scanAR operation: Airy LiDAR has strongest accuracy (100 > 85) and leads as Anchor
+        auto res_nom = fusion_engine.fuseSensors({in_airy, in_gemini}, scanar_cfg, rt_params);
+        CHECK(res_nom.success && !res_nom.fused_cloud.empty(), "Real-time multi-sensor overlap failed");
+        CHECK(res_nom.anchor_sensor_role == "AIRY", "Nominal anchor must be AIRY (highest metric accuracy)");
+        CHECK(!res_nom.anchor_failover_active, "Failover must be false when primary anchor is healthy");
+        CHECK(res_nom.colorized_lidar_points > 0, "Real-time spatial hash RGB transfer must colorize LiDAR points");
+        std::cout << "  ✓ Nominal multi-sensor overlap: Anchor=" << res_nom.anchor_sensor_role
+                  << " (score=" << res_nom.anchor_accuracy_score << "), fused=" << res_nom.fused_cloud.size()
+                  << " pts in " << res_nom.computation_time_ms << " ms" << std::endl;
+
+        // 2. LiDAR fails / loses tracking -> Camera (Gemini 336L) dynamically takes the lead as Anchor
+        in_airy.is_tracking_healthy = false;
+        auto res_failover = fusion_engine.fuseSensors({in_airy, in_gemini}, scanar_cfg, rt_params);
+        CHECK(res_failover.success && !res_failover.fused_cloud.empty(), "Failover multi-sensor overlap failed");
+        CHECK(res_failover.anchor_sensor_role == "GEMINI", "Anchor must dynamically fail over to GEMINI when AIRY fails");
+        CHECK(res_failover.anchor_failover_active, "anchor_failover_active must be true during LiDAR failure");
+        std::cout << "  ✓ Dynamic Failover (LiDAR lost -> Camera lead): Anchor=" << res_failover.anchor_sensor_role
+                  << " (score=" << res_failover.anchor_accuracy_score << ") | " << res_failover.anchor_rationale << std::endl;
+
+        // 3. LiDAR recovers -> Airy LiDAR automatically retakes the lead as Anchor
+        in_airy.is_tracking_healthy = true;
+        auto res_recover = fusion_engine.fuseSensors({in_airy, in_gemini}, scanar_cfg, rt_params);
+        CHECK(res_recover.anchor_sensor_role == "AIRY", "AIRY must retake anchor lead upon recovery");
+        CHECK(!res_recover.anchor_failover_active, "anchor_failover_active must clear upon AIRY recovery");
+        std::cout << "  ✓ Dynamic Recovery (LiDAR restored -> LiDAR lead): Anchor=" << res_recover.anchor_sensor_role << std::endl;
+
+        // 4. Cross-OS / Cross-Sensor Collaborative Session (Linux scanAR + Windows Gemini+Camera + macOS Viture)
+        CSlamEngine cross_os_cslam;
+        // Linux ARM64 node (scanAR fused cloud)
+        cross_os_cslam.updateScannerSubmap("node-linux-scanar", "Linux-scanAR (Airy+336L)", res_nom.fused_cloud, {}, q_ident, false);
+        // Windows x64 node (Gemini 336L + UVC Camera fused cloud, initially non-overlapping with IMU orientation)
+        cross_os_cslam.updateScannerSubmap("node-win-rgbd-cam", "Win64-Desktop (336L+UVC)", non_overlap_cloud, {}, q_imu2, false);
+        // macOS ARM64 node (Viture Luma Ultra VIO cloud, overlapping with Linux scanAR)
+        cross_os_cslam.updateScannerSubmap("node-macos-viture", "macOS-Viture (Luma Ultra)", overlap_cloud, {}, q_imu4, true);
+
+        auto cross_nodes = cross_os_cslam.getScannerNodes();
+        CHECK(cross_nodes.size() == 3, "Expected 3 cross-OS nodes in C-SLAM session");
+        CHECK(cross_nodes[0].alignment_state == CSlamAlignmentState::ANCHOR, "Linux scanAR node must be ANCHOR");
+        CHECK(cross_nodes[1].alignment_state == CSlamAlignmentState::UNALIGNED_IMU_OFFSET, "Non-overlapping Windows node must be IMU-oriented at separation offset");
+        CHECK(cross_nodes[2].alignment_state == CSlamAlignmentState::OVERLAP_LOCKED, "Overlapping macOS Viture node must snap to OVERLAP_LOCKED");
+
+        // Now Windows node moves into overlapping area -> automatically snaps into merged map!
+        cross_os_cslam.updateScannerSubmap("node-win-rgbd-cam", "Win64-Desktop (336L+UVC)", overlap_cloud, {}, q_imu4, true);
+        cross_nodes = cross_os_cslam.getScannerNodes();
+        CHECK(cross_nodes[1].alignment_state == CSlamAlignmentState::OVERLAP_LOCKED, "Windows node must transition from UNALIGNED_IMU_OFFSET to OVERLAP_LOCKED once overlap is detected");
+        std::cout << "  ✓ Cross-OS (Linux/Windows/macOS) & Cross-Sensor collaborative C-SLAM verified: IMU separation -> automatic SE(3) overlap snap!" << std::endl;
+    }
 
     // Clean up temporary test directory
     fs::remove_all(temp_test_dir);
 
     std::cout << "\n=================================================================" << std::endl;
-    std::cout << "  MILESTONE 10 ACCEPTANCE VERIFICATION: ALL 7 GATES PASSED       " << std::endl;
+    std::cout << "  MILESTONE 10 ACCEPTANCE VERIFICATION: ALL 9 GATES PASSED       " << std::endl;
     std::cout << "=================================================================" << std::endl;
     return 0;
 }

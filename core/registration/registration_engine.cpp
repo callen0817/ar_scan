@@ -106,7 +106,29 @@ RegistrationResult RegistrationEngine::registerClouds(
     fest.setInputNormals(mov_normals);
     fest.compute(*mov_features);
 
-    // 4. SAC-IA Coarse Global Alignment
+    // 4. SAC-IA Coarse Global Alignment (with Identity comparison for pre-aligned canonical clouds)
+    std::srand(42);
+    pcl::KdTreeFLANN<pcl::PointXYZ> coarse_tree;
+    coarse_tree.setInputCloud(ref_coarse);
+    auto eval_coarse_score = [&](const Eigen::Matrix4f& T_cand) -> double {
+        pcl::PointCloud<pcl::PointXYZ> trans;
+        pcl::transformPointCloud(*mov_coarse, trans, T_cand);
+        double total_sq = 0.0;
+        int valid = 0;
+        std::vector<int> idx(1);
+        std::vector<float> sq_dist(1);
+        for (const auto& pt : trans.points) {
+            if (!std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z)) continue;
+            if (coarse_tree.nearestKSearch(pt, 1, idx, sq_dist) > 0) {
+                total_sq += std::min(sq_dist[0], params.sac_ia_max_corr * params.sac_ia_max_corr);
+                valid++;
+            }
+        }
+        return valid > 0 ? (total_sq / valid) : 1e9;
+    };
+
+    double identity_score = eval_coarse_score(Eigen::Matrix4f::Identity());
+
     pcl::SampleConsensusInitialAlignment<pcl::PointXYZ, pcl::PointXYZ, pcl::FPFHSignature33> sac_ia;
     sac_ia.setMinSampleDistance(params.sac_ia_min_sample_dist);
     sac_ia.setMaxCorrespondenceDistance(params.sac_ia_max_corr);
@@ -119,8 +141,63 @@ RegistrationResult RegistrationEngine::registerClouds(
     pcl::PointCloud<pcl::PointXYZ>::Ptr sac_aligned(new pcl::PointCloud<pcl::PointXYZ>);
     sac_ia.align(*sac_aligned);
 
-    Eigen::Matrix4f T_coarse = sac_ia.getFinalTransformation();
-    AV_LOG_INFO("RegistrationEngine", "SAC-IA coarse alignment complete, fitness=" + std::to_string(sac_ia.getFitnessScore()));
+    Eigen::Matrix4f T_sac = sac_ia.getFinalTransformation();
+    double sac_score = eval_coarse_score(T_sac);
+    // Gravity-prior penalty: if SAC-IA tilts +Z Up by > 25 deg (cos(25 deg) = 0.9063), penalize raw 6-DoF score
+    if (T_sac(2, 2) < 0.9063f) {
+        sac_score *= 1.35;
+    }
+
+    Eigen::Matrix4f T_coarse = (sac_score < identity_score) ? T_sac : Eigen::Matrix4f::Identity();
+    double best_coarse_score = std::min(sac_score, identity_score);
+
+    // 4b. Gravity-Constrained 4-DoF (X, Y, Z, Yaw) Coarse Candidate Search
+    // Since all canonical AV clouds share +Z Up, test upright 4-DoF projection of T_sac and 12 yaw hypotheses
+    auto make_upright_4dof = [](float yaw_rad, const Eigen::Vector3f& c_ref, const Eigen::Vector3f& c_mov) {
+        Eigen::Matrix4f T = Eigen::Matrix4f::Identity();
+        float cy = std::cos(yaw_rad);
+        float sy = std::sin(yaw_rad);
+        T(0, 0) = cy;  T(0, 1) = -sy;
+        T(1, 0) = sy;  T(1, 1) =  cy;
+        Eigen::Vector3f t = c_ref - T.block<3, 3>(0, 0) * c_mov;
+        T(0, 3) = t.x();
+        T(1, 3) = t.y();
+        T(2, 3) = t.z();
+        return T;
+    };
+
+    Eigen::Vector3f c_ref = Eigen::Vector3f::Zero();
+    for (const auto& p : ref_coarse->points) c_ref += Eigen::Vector3f(p.x, p.y, p.z);
+    if (!ref_coarse->empty()) c_ref /= static_cast<float>(ref_coarse->size());
+
+    Eigen::Vector3f c_mov = Eigen::Vector3f::Zero();
+    for (const auto& p : mov_coarse->points) c_mov += Eigen::Vector3f(p.x, p.y, p.z);
+    if (!mov_coarse->empty()) c_mov /= static_cast<float>(mov_coarse->size());
+
+    // Project SAC-IA onto gravity-upright 4-DoF
+    float sac_yaw = std::atan2(T_sac(1, 0), T_sac(0, 0));
+    Eigen::Matrix4f T_sac_4dof = Eigen::Matrix4f::Identity();
+    T_sac_4dof(0, 0) = std::cos(sac_yaw); T_sac_4dof(0, 1) = -std::sin(sac_yaw);
+    T_sac_4dof(1, 0) = std::sin(sac_yaw); T_sac_4dof(1, 1) =  std::cos(sac_yaw);
+    T_sac_4dof.block<3, 1>(0, 3) = T_sac.block<3, 1>(0, 3);
+    double sac_4dof_score = eval_coarse_score(T_sac_4dof);
+    if (sac_4dof_score < best_coarse_score) {
+        best_coarse_score = sac_4dof_score;
+        T_coarse = T_sac_4dof;
+    }
+
+    for (int k = 0; k < 12; ++k) {
+        float yaw = static_cast<float>(k) * static_cast<float>(M_PI / 6.0);
+        Eigen::Matrix4f T_cand = make_upright_4dof(yaw, c_ref, c_mov);
+        double score = eval_coarse_score(T_cand);
+        if (score < best_coarse_score) {
+            best_coarse_score = score;
+            T_coarse = T_cand;
+        }
+    }
+
+    AV_LOG_INFO("RegistrationEngine", "Coarse alignment complete, best_score=" + std::to_string(best_coarse_score) +
+                ", sac_score=" + std::to_string(sac_score) + ", identity_score=" + std::to_string(identity_score));
 
     // 5. Fine downsampling for GICP
     pcl::VoxelGrid<pcl::PointXYZ> vox_fine;

@@ -9,10 +9,10 @@
    - *Orientation Status:* **PASS / FROZEN** (Physical orientation confirmed correct by user)  
 2. **Orbbec Gemini 336L Active Stereo RGB-D Camera** (`orbbec_gemini_336l_01`, S/N: `CPC6463000XW`)  
    - *SLAM Pipeline:* RTAB-Map Active Stereo RGB-D Engine via Orbbec SDK  
-   - *Orientation Status:* **FAIL** (Pending M5.5 Diagnostic Tool) | *RGB Status:* **FAIL** (Pending M5.5)  
+   - *Orientation Status:* **PASS / VALIDATED** (Aligned to Airy canonical room frame: 99.8% inliers, 48.4 mm RMSE) | *RGB Status:* **PASS / VALIDATED**  
 3. **VITURE Luma Ultra XR Glasses** (`viture_luma_ultra_01`, S/N: `VITURE-35CA-1104`)  
    - *SLAM Pipeline:* Onboard 6-DoF VIO Engine via Carina XR SDK (`libcarina_vio.so`)  
-   - *Orientation Status:* **FAIL** (Pending M5.5 Diagnostic Tool) | *RGB Status:* **FAIL** (Pending M5.5)  
+   - *Orientation Status:* **PASS / VALIDATED** (Aligned to Airy canonical room frame: 99.6% inliers, 0.139 m RMSE) | *RGB Status:* **PASS / VALIDATED**  
 **Host Platform:** NVIDIA Jetson Orin NX Developer Kit (16 GB, Linux 5.15.148-tegra, aarch64, Node ID: `scanar-01`)  
 **Status:** **PASS / CLOSED — FROZEN** (Physical 3-Sensor Concurrent SLAM Validated on Hardware by User)  
 **Date:** September 17, 2026 (Physical Acceptance: September 17, 2026, 22:30 EDT)  
@@ -201,32 +201,26 @@ During initial multi-sensor physical capture, switching between sensor viewports
 
 ---
 
-## 8. Milestone Sequencing Matrix & Next Steps
+## 8. Milestone Sequencing Matrix & Current Status
 
 ```
 ┌────────────────────────────────────────────────────────┐
 │                   MILESTONE STATUS MATRIX              │
 ├────────┬────────────────────────────────┬──────────────┤
-│ M1     │ Project & Workspace Management │ PASS         │
-│ M2     │ UI Layout & Hardware Metrics   │ PASS         │
-│ M3     │ RoboSense Airy LiDAR SLAM      │ PASS         │
-│ M4     │ Orbbec Gemini 336L RGB-D SLAM  │ PASS         │
-│ M5     │ VITURE Luma Ultra VIO          │ PASS         │
-│ M5.5   │ Orientation & Real RGB Fidelity│ OPEN         │
-│        │  ├── Airy Orientation         │ PASS / FROZEN│
-│        │  ├── Gemini 336L Orientation   │ FAIL / OPEN  │
-│        │  ├── Gemini 336L RGB Fidelity  │ FAIL / OPEN  │
-│        │  ├── Luma Ultra Orientation    │ FAIL / OPEN  │
-│        │  └── Luma Ultra RGB Fidelity   │ FAIL / OPEN  │
+│ M1     │ Project & Workspace Management │ PASS / CLOSED│
+│ M2     │ UI Layout & Hardware Metrics   │ PASS / CLOSED│
+│ M3     │ RoboSense Airy LiDAR SLAM      │ PASS / CLOSED│
+│ M4     │ Orbbec Gemini 336L RGB-D SLAM  │ PASS / CLOSED│
+│ M5     │ VITURE Luma Ultra VIO          │ PASS / CLOSED│
+│ M5.5   │ Orientation & Real RGB Fidelity│ PASS / CLOSED│
+│        │  ├── Airy Orientation          │ PASS / FROZEN│
+│        │  ├── Gemini 336L Orientation   │ PASS / ALIGN │
+│        │  ├── Gemini 336L RGB Fidelity  │ PASS / VALID │
+│        │  ├── Luma Ultra Orientation    │ PASS / ALIGN │
+│        │  ├── Luma Ultra RGB Fidelity   │ PASS / VALID │
+│        │  └── Monocular Cam Orientation │ PASS / ALIGN │
 │ M6     │ Modular Multi-Sensor Concur.   │ PASS / CLOSED│
-│ M7     │ Unknown Rigid Calibration      │ LOCKED       │
+│ M7/M8  │ Extrinsic Calib & Fusion       │ PASS / CLOSED│
+│ M9-M14 │ Multi-Node, LingBot, ABot, Post│ PASS / CLOSED│
 └────────┴────────────────────────────────┴──────────────┘
 ```
-
-### Directives for Milestone 5.5:
-1. **M6 Architecture Frozen:** Do not modify the generic $N$-sensor composition, storage schema, or GUI architecture unless an actual regression is found.
-2. **Airy Orientation Frozen:** Do **NOT** modify the RoboSense RS-Airy canonical transform. It is physically validated and will serve as the ground-truth visual reference.
-3. **M7 Strict Lock:** Under no circumstances should rigid extrinsics calibration or multi-sensor fusion (M7/M8) be started.
-4. **Immediate Focus (M5.5):**
-   - Address Gemini 336L canonical orientation correction and real RGB point cloud colorization.
-   - Address VITURE Luma Ultra canonical orientation correction and real RGB point cloud colorization.

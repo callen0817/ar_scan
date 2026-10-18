@@ -283,21 +283,43 @@ class AirySlamDaemon:
 
                 # Subsample / Voxelize into global map (5cm voxels)
                 v_size = self.voxel_size
-                gxs = np.floor(xs / v_size).astype(np.int32)
-                gys = np.floor(ys / v_size).astype(np.int32)
-                gzs = np.floor(zs / v_size).astype(np.int32)
+                gxs = np.floor(xs / v_size).astype(np.int64)
+                gys = np.floor(ys / v_size).astype(np.int64)
+                gzs = np.floor(zs / v_size).astype(np.int64)
+
+                keys64 = ((gxs & 0x1FFFFF) << 42) | ((gys & 0x1FFFFF) << 21) | (gzs & 0x1FFFFF)
+                _, unique_idx = np.unique(keys64, return_index=True)
+
+                u_xs = xs[unique_idx]
+                u_ys = ys[unique_idx]
+                u_zs = zs[unique_idx]
+                u_is = intensities[unique_idx]
+                u_gxs = gxs[unique_idx]
+                u_gys = gys[unique_idx]
+                u_gzs = gzs[unique_idx]
 
                 new_batch = []
                 with self.lock:
-                    for i in range(len(pts_valid)):
-                        key = (int(gxs[i]), int(gys[i]), int(gzs[i]))
-                        if key not in self.global_voxels:
-                            pt = (float(xs[i]), float(ys[i]), float(zs[i]), float(intensities[i]))
-                            self.global_voxels[key] = pt
+                    voxels = self.global_voxels
+                    for i in range(len(unique_idx)):
+                        key = (int(u_gxs[i]), int(u_gys[i]), int(u_gzs[i]))
+                        x, y, z, inten = float(u_xs[i]), float(u_ys[i]), float(u_zs[i]), float(u_is[i])
+                        prev = voxels.get(key)
+                        if prev is None:
+                            pt = (x, y, z, inten)
+                            voxels[key] = pt
                             new_batch.append(pt)
-                    self.new_points_buffer.extend(new_batch)
+                        else:
+                            voxels[key] = (
+                                0.75 * prev[0] + 0.25 * x,
+                                0.75 * prev[1] + 0.25 * y,
+                                0.75 * prev[2] + 0.25 * z,
+                                0.75 * prev[3] + 0.25 * inten
+                            )
+                    if new_batch:
+                        self.new_points_buffer.extend(new_batch)
 
-            except Exception as e:
+            except Exception:
                 pass
 
         node.create_subscription(Odometry, "/aft_mapped_to_init", odom_callback, qos_profile_sensor_data)

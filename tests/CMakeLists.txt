@@ -239,4 +239,29 @@ target_link_libraries(test_m9_acceptance PRIVATE
 )
 add_test(NAME test_m9_acceptance COMMAND test_m9_acceptance)
 
+add_executable(test_m12_acceptance acceptance/test_m12_acceptance.cpp)
+target_link_libraries(test_m12_acceptance PRIVATE
+    av_gui
+    av_platform
+    av_core
+    Qt5::Core
+    Qt5::Gui
+    Qt5::Quick
+    Qt5::Qml
+)
+add_test(NAME test_m12_acceptance COMMAND test_m12_acceptance)
+
+add_executable(test_m7_m8_acceptance acceptance/test_m7_m8_acceptance.cpp)
+target_link_libraries(test_m7_m8_acceptance PRIVATE
+    av_gui
+    av_platform
+    av_core
+    Qt5::Core
+    Qt5::Gui
+    Qt5::Quick
+    Qt5::Qml
+)
+add_test(NAME test_m7_m8_acceptance COMMAND test_m7_m8_acceptance)
+
+
 

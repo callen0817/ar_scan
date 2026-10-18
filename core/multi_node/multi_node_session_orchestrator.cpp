@@ -61,12 +61,39 @@ void MultiNodeSessionOrchestrator::setupCallbacks() {
     });
 
     coordination_service_->setMemberJoinedCallback([this](const std::string& node_uuid, const std::string& sid) {
+        std::string display_name = node_uuid;
+        auto members = coordination_service_->getSessionMembers();
+        for (const auto& m : members) {
+            if (m.node_uuid == node_uuid && !m.display_name.empty()) {
+                display_name = m.display_name;
+                break;
+            }
+        }
         {
             std::lock_guard<std::mutex> lock(session_mutex_);
             current_session_.add_scanner_node(node_uuid, "SESSION_PARTICIPANT");
         }
+        cslam_engine_.registerScanner(node_uuid, display_name, false);
+
+        // If we are Coordinator, push all existing scanner submaps and current alignment state
+        // to the newly joined scanner so it immediately sees the live merged point cloud!
+        if (coordination_service_->getSessionRole() == schemas::NodeSessionRole::SESSION_COORDINATOR) {
+            auto states = cslam_engine_.getAllScannerStates();
+            for (const auto& st : states) {
+                if (!st.raw_points.empty() && st.node_uuid != node_uuid) {
+                    nlohmann::json submap_msg = cslam_engine_.serializeSubmapMessage(st.node_uuid);
+                    coordination_service_->sendDirectMessageToPeer(node_uuid, MessageType::CSLAM_SUBMAP_UPDATE, submap_msg);
+                }
+            }
+            nlohmann::json align_msg = cslam_engine_.serializeAlignmentState();
+            coordination_service_->sendDirectMessageToPeer(node_uuid, MessageType::CSLAM_ALIGNMENT_UPDATE, align_msg);
+        }
+
         if (on_member_list_changed_) {
             on_member_list_changed_();
+        }
+        if (on_cslam_updated_) {
+            on_cslam_updated_();
         }
     });
 
@@ -105,10 +132,41 @@ void MultiNodeSessionOrchestrator::setupCallbacks() {
             on_capture_state_changed_(false, capture_actual_stop_ns_);
         }
     });
+
+    coordination_service_->setCslamSubmapCallback([this](const std::string& source_node_uuid, const nlohmann::json& payload) {
+        (void)source_node_uuid;
+        if (cslam_engine_.ingestSerializedSubmapMessage(payload)) {
+            if (coordination_service_->getSessionRole() == schemas::NodeSessionRole::SESSION_COORDINATOR) {
+                cslam_engine_.evaluateAndSnapOverlaps();
+                nlohmann::json align_payload = cslam_engine_.serializeAlignmentState();
+                coordination_service_->broadcastAlignmentUpdate(align_payload);
+            }
+            if (on_cslam_updated_) {
+                on_cslam_updated_();
+            }
+        }
+    });
+
+    coordination_service_->setCslamAlignmentCallback([this](const std::string& source_node_uuid, const nlohmann::json& payload) {
+        (void)source_node_uuid;
+        if (cslam_engine_.applySerializedAlignmentState(payload)) {
+            if (on_cslam_updated_) {
+                on_cslam_updated_();
+            }
+        }
+    });
+}
+
+void MultiNodeSessionOrchestrator::setLocalIdentityOverride(const std::string& node_uuid, const std::string& display_name) {
+    override_node_uuid_ = node_uuid;
+    override_display_name_ = display_name;
+    if (coordination_service_) {
+        coordination_service_->setLocalIdentityOverride(node_uuid, display_name);
+    }
 }
 
 void MultiNodeSessionOrchestrator::updateBeaconAvailability(const std::string& state) {
-    auto node = NodeIdentityManager::instance().getNode();
+    auto node = getLocalNode();
     DiscoveryBeacon b;
     b.node_uuid = node.node_uuid();
     b.display_name = node.display_name();
@@ -126,21 +184,36 @@ void MultiNodeSessionOrchestrator::updateBeaconAvailability(const std::string& s
 }
 
 schemas::ScannerNode MultiNodeSessionOrchestrator::getLocalNode() {
-    return NodeIdentityManager::instance().getNode();
+    auto node = NodeIdentityManager::instance().getNode();
+    if (!override_node_uuid_.empty()) {
+        node.set_node_uuid(override_node_uuid_);
+    }
+    if (!override_display_name_.empty()) {
+        node.set_display_name(override_display_name_);
+    }
+    return node;
 }
 
 std::string MultiNodeSessionOrchestrator::getLocalNodeUuid() {
+    if (!override_node_uuid_.empty()) return override_node_uuid_;
     return NodeIdentityManager::instance().getNodeUuid();
 }
 
 bool MultiNodeSessionOrchestrator::setDisplayName(const std::string& name) {
+    if (!override_node_uuid_.empty()) {
+        override_display_name_ = name;
+        if (coordination_service_) {
+            coordination_service_->setLocalIdentityOverride(override_node_uuid_, override_display_name_);
+        }
+        return true;
+    }
     bool ok = NodeIdentityManager::instance().setDisplayName(name);
     if (ok) updateBeaconAvailability(coordination_service_->isCapturing() ? "CAPTURING" : "AVAILABLE");
     return ok;
 }
 
 void MultiNodeSessionOrchestrator::registerLocalSensor(const schemas::SensorInstance& sensor) {
-    // Keep local node schemas updated
+    (void)sensor;
 }
 
 void MultiNodeSessionOrchestrator::clearLocalSensors() {}
@@ -169,6 +242,9 @@ bool MultiNodeSessionOrchestrator::createSession(const std::string& project_id, 
         current_session_.set_coordinator_node_uuid(getLocalNodeUuid());
         current_session_.add_scanner_node(getLocalNodeUuid(), "SESSION_COORDINATOR");
     }
+
+    cslam_engine_.clear();
+    cslam_engine_.registerScanner(getLocalNodeUuid(), getLocalNode().display_name(), true);
 
     bool ok = coordination_service_->createSession(session_id, project_id);
     if (ok) {
@@ -252,6 +328,7 @@ bool MultiNodeSessionOrchestrator::joinSession(const std::string& session_id, co
         std::lock_guard<std::mutex> lock(session_mutex_);
         active_session_id_ = session_id;
     }
+    cslam_engine_.clear();
     if (!coordination_service_->connectToCoordinator(coord_ip, coord_port)) {
         return false;
     }
@@ -265,8 +342,63 @@ bool MultiNodeSessionOrchestrator::leaveSession() {
         active_session_id_.clear();
         active_project_id_.clear();
     }
+    cslam_engine_.clear();
     updateBeaconAvailability("AVAILABLE");
     return ok;
+}
+
+bool MultiNodeSessionOrchestrator::publishLocalSubmap(const std::vector<schemas::PointXYZI>& points,
+                                                      const schemas::Quaternion& imu_orientation,
+                                                      const schemas::Pose3D& local_pose) {
+    return publishLocalSubmap(points, local_pose.timestamp_ns > 0 ? std::vector<schemas::Pose3D>{local_pose} : std::vector<schemas::Pose3D>{}, imu_orientation, true);
+}
+
+bool MultiNodeSessionOrchestrator::publishLocalSubmap(const std::vector<schemas::PointXYZI>& points,
+                                                      const std::vector<schemas::Pose3D>& trajectory,
+                                                      const schemas::Quaternion& imu_orientation,
+                                                      bool force_snap) {
+    std::string local_uuid = getLocalNodeUuid();
+    std::string display_name = getLocalNode().display_name();
+
+    cslam_engine_.updateScannerSubmap(local_uuid, display_name, points, trajectory, imu_orientation, force_snap);
+
+    nlohmann::json payload = cslam_engine_.serializeSubmapMessage(local_uuid);
+    bool net_sent = coordination_service_->sendSubmapUpdate(payload);
+
+    if (force_snap &&
+        (coordination_service_->getSessionRole() == schemas::NodeSessionRole::SESSION_COORDINATOR ||
+         coordination_service_->getActiveSessionId().empty())) {
+        cslam_engine_.evaluateAndSnapOverlaps();
+        if (!coordination_service_->getActiveSessionId().empty()) {
+            nlohmann::json align_payload = cslam_engine_.serializeAlignmentState();
+            coordination_service_->broadcastAlignmentUpdate(align_payload);
+        }
+    }
+
+    if (on_cslam_updated_) {
+        on_cslam_updated_();
+    }
+    return net_sent;
+}
+
+size_t MultiNodeSessionOrchestrator::triggerCslamOverlapEvaluation() {
+    size_t newly_snapped = cslam_engine_.evaluateAndSnapOverlaps();
+    if (!coordination_service_->getActiveSessionId().empty()) {
+        nlohmann::json align_payload = cslam_engine_.serializeAlignmentState();
+        coordination_service_->broadcastAlignmentUpdate(align_payload);
+    }
+    if (on_cslam_updated_) {
+        on_cslam_updated_();
+    }
+    return newly_snapped;
+}
+
+std::vector<schemas::PointXYZI> MultiNodeSessionOrchestrator::getMergedCslamPointCloud(bool differentiate_scanner_colors) const {
+    return cslam_engine_.getMergedPointCloud(differentiate_scanner_colors);
+}
+
+std::vector<ScannerSubmapState> MultiNodeSessionOrchestrator::getCslamScannerNodes() const {
+    return cslam_engine_.getAllScannerStates();
 }
 
 std::string MultiNodeSessionOrchestrator::getActiveSessionId() {

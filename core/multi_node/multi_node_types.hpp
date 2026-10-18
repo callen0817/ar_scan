@@ -122,6 +122,8 @@ namespace MessageType {
     constexpr const char* CAPTURE_STATUS = "CAPTURE_STATUS";
     constexpr const char* SESSION_STATUS = "SESSION_STATUS";
     constexpr const char* SYNC_STATUS = "SYNC_STATUS";
+    constexpr const char* CSLAM_SUBMAP_UPDATE = "CSLAM_SUBMAP_UPDATE";
+    constexpr const char* CSLAM_ALIGNMENT_UPDATE = "CSLAM_ALIGNMENT_UPDATE";
 }
 
 // Discovered Node Status in Local Registry

@@ -18,13 +18,8 @@
   "manufacturer": "Seeed Studio",
   "model": "SenseCAP Watcher",
   "output_contract": {
-    "frequency_hz": 0.0,
-    "point_type": "NONE",
-    "scale_classification": {
-      "geometry_source": "NONE",
-      "metric_constraint": "NONE",
-      "scale_status": "NO_RECONSTRUCTION_BACKEND_MATCHED"
-    },
+    "point_cloud_format": "XYZRGB",
+    "pose_format": "timestamp_ns, x, y, z, qx, qy, qz, qw, yaw",
     "target_frame": "canonical_av"
   },
   "preprocessing": [
@@ -71,5 +66,79 @@
   "transport": "USB_SERIAL_CDC_ACM",
   "validation_results": [
     {}
-  ]
+  ],
+  "canonical_av_transform": {
+    "target_convention": "CANONICAL_AV (+X Fwd, +Y Left, +Z Up, Ground XY)",
+    "source_frame": "opencv_optical_frame (+X Right, +Y Down, +Z Forward)",
+    "status": "VALIDATED",
+    "roll_deg": 45.5,
+    "pitch_deg": -37.5,
+    "yaw_deg": -143.0,
+    "base_optical_to_av_3x3": [
+      [
+        0.0,
+        0.0,
+        1.0
+      ],
+      [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        -1.0,
+        0.0
+      ]
+    ],
+    "matrix_3x3": [
+      [
+        -0.6336,
+        0.768585,
+        -0.088478
+      ],
+      [
+        -0.477452,
+        -0.298463,
+        0.826413
+      ],
+      [
+        0.608761,
+        0.56586,
+        0.556069
+      ]
+    ],
+    "transform_4x4": [
+      [
+        0.0,
+        0.0,
+        1.0,
+        0.0
+      ],
+      [
+        -1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        -1.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "mapping": "X_av = +Z_cam, Y_av = -X_cam, Z_av = -Y_cam (plus rig mount RPY=[+45.5, -37.5, -143.0] deg)",
+    "reference_alignment": {
+      "reference_dataset": "MultiDeviceTest:airy (cap_1789676064983_airy)",
+      "inlier_fraction_35cm": 0.996,
+      "rmse_m": 0.135
+    }
+  }
 }

@@ -86,7 +86,7 @@ schemas::MapMetadata GeminiRgbdBackend::getMapMetadata() const {
     schemas::MapMetadata meta("map_gemini_" + std::to_string(current_pose_.timestamp_ns),
                              "session_active",
                              "orbbec_gemini_336l_01",
-                             "scanR");
+                             "scanAR");
     meta.set_timestamp_ns(current_pose_.timestamp_ns);
     meta.set_current_pose(current_pose_);
     meta.set_trajectory(trajectory_);

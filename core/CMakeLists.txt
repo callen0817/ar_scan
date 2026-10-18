@@ -33,8 +33,12 @@ add_library(av_core STATIC
     multi_node/discovery_service.cpp
     multi_node/coordination_service.cpp
     multi_node/multi_node_session_orchestrator.cpp
+    multi_node/cslam_engine.cpp
     schemas/registration_result.cpp
     registration/registration_engine.cpp
+    processing/point_cloud_processor.cpp
+    fusion/extrinsic_calibrator.cpp
+    fusion/multi_sensor_fusion_engine.cpp
 )
 
 target_include_directories(av_core PUBLIC

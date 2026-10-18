@@ -39,7 +39,25 @@ int main(int argc, char* argv[]) {
     fs::path repo_root = "/home/scanar/av_scan";
     fs::path excluded_ref = repo_root / "profiles" / "excluded_reference" / "airy_profile.json";
     fs::path validated_ref = repo_root / "profiles" / "validated" / "airy_profile.json";
+    fs::path validated_backup = repo_root / "profiles" / "excluded_reference" / "airy_profile_validated_backup.json";
     fs::path exp_profile_path = repo_root / "profiles" / "experimental" / "airy_generated_profile.json";
+
+    struct ScopedBlindTestGuard {
+        fs::path val_path;
+        fs::path bak_path;
+        bool moved = false;
+        ScopedBlindTestGuard(const fs::path& v, const fs::path& b) : val_path(v), bak_path(b) {
+            if (fs::exists(val_path)) {
+                fs::rename(val_path, bak_path);
+                moved = true;
+            }
+        }
+        ~ScopedBlindTestGuard() {
+            if (moved && fs::exists(bak_path)) {
+                fs::rename(bak_path, val_path);
+            }
+        }
+    } blind_guard(validated_ref, validated_backup);
 
     // -------------------------------------------------------------------------
     // Gate 1: Ensure Blind Test Inaccessibility of Reference Profile
@@ -181,6 +199,15 @@ int main(int argc, char* argv[]) {
     CHECK(bridge->createProject("Airy Generated Profile Test", "Validating physical mapping with generated profile"), "Failed to create project");
     std::string proj_id = bridge->projectId().toStdString();
     std::cout << "  Created Project: " << proj_id << std::endl;
+    struct ScopedProjectCleanup {
+        fs::path proj_dir;
+        ~ScopedProjectCleanup() {
+            if (!proj_dir.empty() && fs::exists(proj_dir)) {
+                std::error_code ec;
+                fs::remove_all(proj_dir, ec);
+            }
+        }
+    } proj_cleanup{repo_root / "projects" / proj_id};
 
     // Select the experimental generated profile
     int gen_idx = -1;

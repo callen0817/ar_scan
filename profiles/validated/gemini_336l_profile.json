@@ -77,7 +77,7 @@
       "translation": {
         "x": -0.00042455,
         "y": -0.02373056,
-        "z": 0.00009320
+        "z": 9.32e-05
       },
       "rotation": {
         "x": -0.0006584,
@@ -121,9 +121,61 @@
   },
   "canonical_av_transform": {
     "target_convention": "CANONICAL_AV (+X Fwd, +Y Left, +Z Up, Ground XY)",
-    "source_frame": "camera_link",
-    "mapping": "X_av = X_ros, Y_av = Y_ros, Z_av = Z_ros, yaw = yaw_ros",
-    "status": "VALIDATED"
+    "source_frame": "camera_link (RTAB-Map ROS REP-103 pitched ~45 deg on rig)",
+    "status": "VALIDATED",
+    "roll_deg": -2.7,
+    "pitch_deg": -51.0,
+    "yaw_deg": 79.5,
+    "matrix_3x3": [
+      [
+        0.114685,
+        -0.975492,
+        -0.187784
+      ],
+      [
+        0.618782,
+        0.218029,
+        -0.7547
+      ],
+      [
+        0.777146,
+        -0.029645,
+        0.628622
+      ]
+    ],
+    "transform_4x4": [
+      [
+        0.114685,
+        -0.975492,
+        -0.187784,
+        0.004
+      ],
+      [
+        0.618782,
+        0.218029,
+        -0.7547,
+        0.168
+      ],
+      [
+        0.777146,
+        -0.029645,
+        0.628622,
+        -0.017
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "mapping": "X_av = (+0.115)*X + (-0.975)*Y + (-0.188)*Z\nY_av = (+0.619)*X + (+0.218)*Y + (-0.755)*Z\nZ_av = (+0.777)*X + (-0.030)*Y + (+0.629)*Z",
+    "reference_alignment": {
+      "reference_dataset": "MultiDeviceTest:airy (cap_1789676064983_airy)",
+      "inlier_fraction_35cm": 0.998,
+      "inlier_fraction_15cm": 0.978,
+      "rmse_m": 0.0484
+    }
   },
   "validation_results": {
     "status": "VALIDATED",

@@ -73,11 +73,23 @@ QmlBridge::QmlBridge(std::shared_ptr<core::storage::StorageEngine> storage,
         });
         multiNodeOrchestrator_->setMemberListChangedHandler([this]() {
             emit sessionMembersChanged();
+            emit cslamStateChanged();
+        });
+        multiNodeOrchestrator_->setCslamUpdatedHandler([this]() {
+            QMetaObject::invokeMethod(this, [this]() {
+                if (selectedNodeViewIndex_ == -1) {
+                    refreshCslamMergedCloud();
+                } else {
+                    emit cslamStateChanged();
+                }
+            }, Qt::QueuedConnection);
         });
     }
 
     connect(timer_, &QTimer::timeout, this, &QmlBridge::onTimerTick);
     connect(telemetryTimer_, &QTimer::timeout, this, &QmlBridge::onTelemetryTick);
+    connect(this, &QmlBridge::mapDataUpdated, this, [this]() { invalidateDisplayPointsCache(); });
+    connect(this, &QmlBridge::orientationDiagChanged, this, [this]() { invalidateDisplayPointsCache(); });
     registrationEngine_ = std::make_unique<core::registration::RegistrationEngine>();
     refreshData();
     emit canStartChanged();
@@ -237,7 +249,16 @@ void QmlBridge::refreshData() {
                 else instancesStr += inst;
             }
             item["details"] = QString("%1 sensor(s) (%2)").arg(cfg.sensor_instances().size()).arg(instancesStr);
-            item["validationNotice"] = "Modular Scanner Configuration — Extrinsics UNKNOWN (Independent SLAM Pipelines)";
+            if (cfg.extrinsic_status() == core::schemas::ExtrinsicStatus::VALIDATED ||
+                cfg.extrinsic_status() == core::schemas::ExtrinsicStatus::ESTIMATED ||
+                cfg.extrinsic_status() == core::schemas::ExtrinsicStatus::FACTORY_KNOWN) {
+                QString extStat = QString::fromStdString(core::schemas::to_string(cfg.extrinsic_status()));
+                item["validationNotice"] = QString("Modular Scanner Configuration — Extrinsics %1 (Rigid SE(3) Calibrated | Method: %2)")
+                    .arg(extStat)
+                    .arg(QString::fromStdString(cfg.method().empty() ? "TRAJECTORY_HAND_EYE_GICP_SE3" : cfg.method()));
+            } else {
+                item["validationNotice"] = "Modular Scanner Configuration — Extrinsics UNKNOWN (Independent SLAM Pipelines)";
+            }
             scannerList_.append(item);
             availableScanners_.append(item["name"].toString());
         }
@@ -257,6 +278,8 @@ void QmlBridge::refreshData() {
 
             if (prof.slam_backend().empty() || prof.slam_family() == "UNKNOWN" || prof.slam_family() == "NONE") {
                 item["validationNotice"] = "USB serial interfaces detected | Imaging stream not established | Mapping backend: None | Not currently available for spatial capture";
+            } else if (prof.profile_id() == "scanar_01" || prof.device_family() == "HYBRID_LIDAR_STEREO_SCANNER") {
+                item["validationNotice"] = "scanarMini scanAR: RoboSense Airy (Internal Airy 6-DoF IMU) + Orbbec Gemini 336L Stereo Camera (RGB Colorization & Short-Range Dense Stereo Cloud)";
             } else if (prof.slam_family() == "MONOCULAR_NEURAL_RECONSTRUCTION" && prof.slam_backend() == "LingBotStreamingBackend") {
                 item["validationNotice"] = "Monocular Neural Reconstruction (LingBot-Map) | Scale: MODEL_ESTIMATED / NOT INDEPENDENTLY VERIFIED";
             } else if (prof.slam_family() == "LIO" || prof.slam_backend() == "FAST-LIO2" || prof.profile_id().rfind("airy", 0) != std::string::npos || prof.profile_id().rfind("robosense", 0) != std::string::npos) {
@@ -310,7 +333,15 @@ QVariantList QmlBridge::activeSensors() const {
         m["acqRate"] = s.acquisition_rate;
         m["acquisitionRate"] = s.acquisition_rate;
         m["slamRate"] = s.slam_rate;
-        m["active"] = (activeDisplaySensor_ == QString::fromStdString(s.id));
+        bool is_healthy = s.health_override_active ? s.health_override_healthy :
+            (s.tracking_status != "LOST" && s.tracking_status != "OFFLINE" && s.device_status != "DISCONNECTED");
+        bool is_degraded = s.health_override_active ? s.health_override_degraded :
+            (s.tracking_status == "DEGRADED" || s.tracking_status == "RELOCALIZING");
+        m["isHealthy"] = is_healthy;
+        m["isDegraded"] = is_degraded;
+        m["accuracyScore"] = s.accuracy_score;
+        m["isAnchor"] = s.is_anchor || (activeAnchorSensor_ == QString::fromStdString(s.id));
+        m["active"] = (activeDisplaySensor_ == "FUSED" || activeDisplaySensor_ == QString::fromStdString(s.id));
         list.append(m);
     }
     return list;
@@ -321,9 +352,11 @@ void QmlBridge::rebuildActiveSensorsForSelection() {
 
     std::vector<std::string> instance_ids;
 
-    // Check if selected scanner is a ScannerConfig in storage
+    // Check if selected scanner is a ScannerConfig in storage or the composite scanAR profile
     core::schemas::ScannerConfig config;
-    if (storage_ && storage_->loadScannerConfig(selectedScannerId_.toStdString(), config)) {
+    if (selectedScannerId_ == "scanar_01" || selectedScannerId_ == "scanar") {
+        instance_ids = {"robosense_airy_01", "orbbec_gemini_336l_01"};
+    } else if (storage_ && storage_->loadScannerConfig(selectedScannerId_.toStdString(), config)) {
         instance_ids = config.sensor_instances();
     } else if (!selectedScannerId_.isEmpty()) {
         instance_ids.push_back(selectedScannerId_.toStdString());
@@ -530,6 +563,8 @@ void QmlBridge::rebuildActiveSensorsForSelection() {
             AV_LOG_INFO("QmlBridge", "  capture available: false");
         }
 
+        ctx.accuracy_score = core::fusion::MultiSensorFusionEngine::computeNominalAccuracyScore(
+            ctx.id, ctx.scale_status == "METRIC_VERIFIED");
         activeSensors_.push_back(ctx);
     }
 
@@ -548,14 +583,27 @@ void QmlBridge::rebuildActiveSensorsForSelection() {
         ctx.adapter_name = "AirySensorAdapter";
         ctx.backend_name = "FAST-LIO2";
         ctx.is_capturable = true;
+        ctx.accuracy_score = 100.0;
+        ctx.is_anchor = true;
         ctx.map_points = airyMapPoints_;
         ctx.trajectory = airyTrajectory_;
         ctx.point_count = airyPointsCaptured_;
         activeSensors_.push_back(ctx);
     }
 
-    activeDisplaySensor_ = QString::fromStdString(activeSensors_.front().id);
     isDualSensorMode_ = (activeSensors_.size() > 1);
+    if (isDualSensorMode_) {
+        activeDisplaySensor_ = "FUSED";
+        updateLiveMultiSensorFusion(true);
+    } else {
+        activeDisplaySensor_ = QString::fromStdString(activeSensors_.front().id);
+        activeAnchorSensor_ = activeDisplaySensor_;
+        activeAnchorName_ = QString::fromStdString(activeSensors_.front().short_name);
+        activeAnchorScore_ = activeSensors_.front().accuracy_score;
+        isAnchorFailoverActive_ = false;
+        activeAnchorRationale_ = "Primary single-sensor anchor (" + activeAnchorName_ + ").";
+        activeSensors_.front().is_anchor = true;
+    }
 
     if (activeSensors_.size() == 1 && !activeSensors_.front().is_capturable) {
         selectedScannerValidationNotice_ = "USB serial interfaces detected | Imaging stream not established | Mapping backend: None | Not currently available for spatial capture";
@@ -567,6 +615,7 @@ void QmlBridge::rebuildActiveSensorsForSelection() {
     emit activeSensorsChanged();
     emit isDualSensorModeChanged();
     emit activeDisplaySensorChanged();
+    emit fusionStateChanged();
     emit selectedScannerChanged();
     emit canStartChanged();
 }
@@ -644,6 +693,26 @@ void QmlBridge::selectCameraBackend(const QString& backendName) {
 void QmlBridge::setActiveDisplaySensor(const QString& sensorName) {
     if (activeDisplaySensor_ == sensorName && !mapPoints_.empty()) return;
     activeDisplaySensor_ = sensorName;
+    hasCleanupPreview_ = false;
+    preCleanupBackupPoints_.clear();
+
+    if (sensorName == "FUSED" && !fusedMapPoints_.empty()) {
+        mapPoints_ = fusedMapPoints_;
+        trajectory_ = fusedTrajectory_;
+        if (!trajectory_.empty()) {
+            const auto& last = trajectory_.back();
+            currentPoseX_ = last.position.x;
+            currentPoseY_ = last.position.y;
+            currentPoseZ_ = last.position.z;
+        }
+        hasMapData_ = true;
+        emit activeDisplaySensorChanged();
+        emit cleanupStateChanged();
+        emit mapDataUpdated();
+        emit trajectoryChanged();
+        emit poseChanged();
+        return;
+    }
 
     for (const auto& s : activeSensors_) {
         if (s.id == sensorName.toStdString()) {
@@ -671,6 +740,7 @@ void QmlBridge::setActiveDisplaySensor(const QString& sensorName) {
 
     hasMapData_ = (!mapPoints_.empty());
     emit activeDisplaySensorChanged();
+    emit cleanupStateChanged();
     emit mapDataUpdated();
     emit trajectoryChanged();
     emit poseChanged();
@@ -695,7 +765,14 @@ QVariantList QmlBridge::getAvailableDeviceProfiles() const {
 
             std::string lower = pid;
             std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-            if (lower.find("airy") != std::string::npos || lower.find("robosense") != std::string::npos) {
+            if (lower == "scanar_01" || prof.device_family() == "HYBRID_LIDAR_STEREO_SCANNER") {
+                item["sensorType"] = "Airy 3D LiDAR (Internal IMU) + Gemini 336L Stereo RGB-D";
+                item["serialNumber"] = "SCANAR-MINI-001";
+                item["icon"] = "🛰️";
+                item["modality"] = "HYBRID_LIDAR_STEREO";
+                item["tag"] = "scanAR Hybrid";
+                item["tagColor"] = "#10b981";
+            } else if (lower.find("airy") != std::string::npos || lower.find("robosense") != std::string::npos) {
                 item["sensorType"] = "32-Beam Mechanical LiDAR + IMU";
                 item["serialNumber"] = "AIRY-2024-99812";
                 item["icon"] = "📡";
@@ -1342,14 +1419,36 @@ bool QmlBridge::openProject(const QString& projectId) {
             }
         }
 
+        // Reset temporary registration inspection overlay state on opening a regular project
+        hasActiveRegistration_ = false;
+        hasCleanupPreview_ = false;
+        preCleanupBackupPoints_.clear();
+        isFusionActive_ = false;
+        fusedMapPoints_.clear();
+        fusedTrajectory_.clear();
+
         if (!activeSensors_.empty()) {
-            activeDisplaySensor_ = QString::fromStdString(activeSensors_.front().id);
-            mapPoints_ = activeSensors_.front().map_points;
-            trajectory_ = activeSensors_.front().trajectory;
-            pointsCaptured_ = 0;
-            for (const auto& s : activeSensors_) pointsCaptured_ += s.point_count;
-            hasMapData_ = (!mapPoints_.empty());
+            for (auto& s : activeSensors_) {
+                s.accuracy_score = core::fusion::MultiSensorFusionEngine::computeNominalAccuracyScore(
+                    s.id, s.scale_status == "METRIC_VERIFIED");
+            }
             isDualSensorMode_ = (activeSensors_.size() > 1);
+            if (isDualSensorMode_) {
+                activeDisplaySensor_ = "FUSED";
+                updateLiveMultiSensorFusion(true);
+            } else {
+                activeDisplaySensor_ = QString::fromStdString(activeSensors_.front().id);
+                mapPoints_ = activeSensors_.front().map_points;
+                trajectory_ = activeSensors_.front().trajectory;
+                pointsCaptured_ = static_cast<qlonglong>(mapPoints_.size());
+                hasMapData_ = (!mapPoints_.empty());
+                activeAnchorSensor_ = activeDisplaySensor_;
+                activeAnchorName_ = QString::fromStdString(activeSensors_.front().short_name);
+                activeAnchorScore_ = activeSensors_.front().accuracy_score;
+                activeSensors_.front().is_anchor = true;
+                isAnchorFailoverActive_ = false;
+                activeAnchorRationale_ = "Primary single-sensor anchor (" + activeAnchorName_ + ").";
+            }
 
             if (!trajectory_.empty()) {
                 const auto& last = trajectory_.back();
@@ -1365,9 +1464,9 @@ bool QmlBridge::openProject(const QString& projectId) {
             hasMapData_ = true;
         }
 
-        // Reset temporary registration inspection overlay state on opening a regular project
-        hasActiveRegistration_ = false;
         emit activeRegistrationChanged();
+        emit cleanupStateChanged();
+        emit fusionStateChanged();
 
         emit projectNameChanged();
         emit projectIdChanged();
@@ -1472,9 +1571,12 @@ bool QmlBridge::startCapture() {
 
     for (auto& s : activeSensors_) {
         s.map_points.clear();
+        s.raw_map_points.clear();
         s.trajectory.clear();
         s.point_count = 0;
     }
+    liveCleanupTimeMs_ = 0.0;
+    emit cleanupStateChanged();
 
     // Start all active sensors with failure isolation
     std::vector<std::string> started_sensors;
@@ -1615,15 +1717,35 @@ bool QmlBridge::stopCapture() {
     timer_->stop();
     telemetryTimer_->stop();
 
+    core::processing::CleanupParams liveParams;
+    liveParams.enable_voxel_downsample = true;
+    liveParams.voxel_leaf_size_m = 0.025f;
+    liveParams.enable_ror = true;
+    liveParams.ror_radius_m = 0.12;
+    liveParams.ror_min_neighbors = 3;
+    liveParams.enable_sor = true;
+    liveParams.sor_mean_k = 12;
+    liveParams.sor_std_mul = 2.0;
+    liveParams.enable_ground_alignment = liveGroundLockEnabled_;
+    liveParams.align_ground_to_z_zero = liveGroundLockEnabled_;
+    liveParams.remove_ground_plane = false;
+
     uint64_t total_points = 0;
     for (auto& s : activeSensors_) {
         if (s.id == "AIRY") {
             if (airyBackend_) {
                 airyBackend_->stop();
-                s.map_points = airyBackend_->getMapPoints();
+                s.raw_map_points = airyBackend_->getMapPoints();
                 s.trajectory = airyBackend_->getTrajectory();
             }
             if (airyAdapter_) airyAdapter_->stop();
+            if (liveCleanupEnabled_ && !s.raw_map_points.empty()) {
+                auto st = core::processing::PointCloudProcessor::cleanRealtimeFast(s.raw_map_points, s.map_points, liveParams);
+                liveCleanupTimeMs_ = st.computation_time_ms;
+                if (s.map_points.empty()) s.map_points = s.raw_map_points;
+            } else {
+                s.map_points = s.raw_map_points;
+            }
             airyMapPoints_ = s.map_points;
             airyTrajectory_ = s.trajectory;
             airyPointsCaptured_ = s.map_points.size();
@@ -1633,10 +1755,17 @@ bool QmlBridge::stopCapture() {
         } else if (s.id == "GEMINI") {
             if (geminiBackend_) {
                 geminiBackend_->stop();
-                s.map_points = geminiBackend_->getMapPoints();
+                s.raw_map_points = geminiBackend_->getMapPoints();
                 s.trajectory = geminiBackend_->getTrajectory();
             }
             if (geminiAdapter_) geminiAdapter_->stop();
+            if (liveCleanupEnabled_ && !s.raw_map_points.empty()) {
+                auto st = core::processing::PointCloudProcessor::cleanRealtimeFast(s.raw_map_points, s.map_points, liveParams);
+                liveCleanupTimeMs_ = st.computation_time_ms;
+                if (s.map_points.empty()) s.map_points = s.raw_map_points;
+            } else {
+                s.map_points = s.raw_map_points;
+            }
             geminiMapPoints_ = s.map_points;
             geminiTrajectory_ = s.trajectory;
             geminiPointsCaptured_ = s.map_points.size();
@@ -1646,10 +1775,17 @@ bool QmlBridge::stopCapture() {
         } else if (s.id == "VITURE") {
             if (vitureBackend_) {
                 vitureBackend_->stop();
-                s.map_points = vitureBackend_->getMapPoints();
+                s.raw_map_points = vitureBackend_->getMapPoints();
                 s.trajectory = vitureBackend_->getTrajectory();
             }
             if (vitureAdapter_) vitureAdapter_->stop();
+            if (liveCleanupEnabled_ && !s.raw_map_points.empty()) {
+                auto st = core::processing::PointCloudProcessor::cleanRealtimeFast(s.raw_map_points, s.map_points, liveParams);
+                liveCleanupTimeMs_ = st.computation_time_ms;
+                if (s.map_points.empty()) s.map_points = s.raw_map_points;
+            } else {
+                s.map_points = s.raw_map_points;
+            }
             vitureMapPoints_ = s.map_points;
             vitureTrajectory_ = s.trajectory;
             viturePointsCaptured_ = s.map_points.size();
@@ -1659,8 +1795,15 @@ bool QmlBridge::stopCapture() {
         } else if (s.id == "CAMERA") {
             if (cameraBackend_) {
                 cameraBackend_->stop();
-                s.map_points = cameraBackend_->getMapPoints();
+                s.raw_map_points = cameraBackend_->getMapPoints();
                 s.trajectory = cameraBackend_->getTrajectory();
+            }
+            if (liveCleanupEnabled_ && !s.raw_map_points.empty()) {
+                auto st = core::processing::PointCloudProcessor::cleanRealtimeFast(s.raw_map_points, s.map_points, liveParams);
+                liveCleanupTimeMs_ = st.computation_time_ms;
+                if (s.map_points.empty()) s.map_points = s.raw_map_points;
+            } else {
+                s.map_points = s.raw_map_points;
             }
             cameraMapPoints_ = s.map_points;
             cameraTrajectory_ = s.trajectory;
@@ -1680,12 +1823,38 @@ bool QmlBridge::stopCapture() {
     pointsCaptured_ = total_points;
     hasMapData_ = (pointsCaptured_ > 0);
 
-    for (const auto& s : activeSensors_) {
-        if (s.id == activeDisplaySensor_.toStdString()) {
-            mapPoints_ = s.map_points;
-            trajectory_ = s.trajectory;
-            break;
+    if (activeSensors_.size() > 1) {
+        activeDisplaySensor_ = "FUSED";
+        updateLiveMultiSensorFusion(true);
+    } else {
+        for (const auto& s : activeSensors_) {
+            if (s.id == activeDisplaySensor_.toStdString()) {
+                mapPoints_ = s.map_points;
+                trajectory_ = s.trajectory;
+                break;
+            }
         }
+    }
+
+    if (multiNodeOrchestrator_ && !mapPoints_.empty() &&
+        (multiNodeOrchestrator_->isSessionActive() || multiNodeOrchestrator_->cslam().scannerCount() > 0)) {
+        core::schemas::Quaternion imu_q{0.0, 0.0, 0.0, 1.0};
+        QString leadId = (activeSensors_.size() > 1) ? activeAnchorSensor_ : activeDisplaySensor_;
+        if (airyBackend_ && leadId == "AIRY") {
+            imu_q = airyBackend_->getPose().orientation;
+        } else if (geminiBackend_ && leadId == "GEMINI") {
+            imu_q = geminiBackend_->getPose().orientation;
+        } else if (vitureBackend_ && leadId == "VITURE") {
+            imu_q = vitureBackend_->getPose().orientation;
+        } else if (cameraBackend_ && leadId == "CAMERA") {
+            imu_q = cameraBackend_->getPose().orientation;
+        }
+        multiNodeOrchestrator_->publishLocalSubmap(mapPoints_, trajectory_, imu_q, true);
+        if (selectedNodeViewIndex_ == -1) {
+            mapPoints_ = multiNodeOrchestrator_->getMergedCslamPointCloud(cslamColorByScanner_);
+            trajectory_ = multiNodeOrchestrator_->cslam().getMergedTrajectory();
+        }
+        emit cslamStateChanged();
     }
 
     isCapturing_ = false;
@@ -1778,9 +1947,12 @@ bool QmlBridge::saveCapture() {
             fs::path cap_dir = caps_base_dir / cap_id;
             fs::create_directories(cap_dir);
 
-            // Save map.pcd
+            // Save map.pcd (and non-destructive raw backup if live cleanup was active)
             fs::path pcd_path = cap_dir / "map.pcd";
             saveMapPcd(pcd_path.string(), s.map_points);
+            if (liveCleanupEnabled_ && !s.raw_map_points.empty()) {
+                saveMapPcd((cap_dir / "map_raw_backup.pcd").string(), s.raw_map_points);
+            }
 
             // Save trajectory.json
             fs::path traj_path = cap_dir / "trajectory.json";
@@ -1889,11 +2061,23 @@ void QmlBridge::onTelemetryTick() {
     uint64_t total_points = 0;
     QStringList trackSummaries;
 
+    core::processing::CleanupParams liveParams;
+    liveParams.enable_voxel_downsample = true;
+    liveParams.voxel_leaf_size_m = 0.025f;
+    liveParams.enable_ror = true;
+    liveParams.ror_radius_m = 0.12;
+    liveParams.ror_min_neighbors = 3;
+    liveParams.enable_sor = true;
+    liveParams.sor_mean_k = 12;
+    liveParams.sor_std_mul = 2.0;
+    liveParams.enable_ground_alignment = liveGroundLockEnabled_;
+    liveParams.align_ground_to_z_zero = liveGroundLockEnabled_;
+    liveParams.remove_ground_plane = false;
+
     for (auto& s : activeSensors_) {
         if (s.id == "AIRY" && airyBackend_) {
             if (airyBackend_->updateTelemetry()) {
                 any_updated = true;
-                s.point_count = airyBackend_->getPointCount();
                 s.tracking_status = core::schemas::to_string(airyBackend_->getTrackingState());
                 s.acquisition_rate = airyBackend_->getAcquisitionRate();
                 s.slam_rate = airyBackend_->getSlamRate();
@@ -1901,7 +2085,16 @@ void QmlBridge::onTelemetryTick() {
                     s.device_status = core::schemas::to_string(airyAdapter_->getStatus());
                 }
                 airyBackend_->fetchNewPoints();
-                s.map_points = airyBackend_->getMapPoints();
+                s.raw_map_points = airyBackend_->getMapPoints();
+                if (liveCleanupEnabled_ && !s.raw_map_points.empty()) {
+                    auto st = core::processing::PointCloudProcessor::cleanRealtimeFast(s.raw_map_points, s.map_points, liveParams);
+                    liveCleanupTimeMs_ = st.computation_time_ms;
+                    if (s.map_points.empty()) s.map_points = s.raw_map_points;
+                    emit cleanupStateChanged();
+                } else {
+                    s.map_points = s.raw_map_points;
+                }
+                s.point_count = s.map_points.size() > 0 ? s.map_points.size() : airyBackend_->getPointCount();
                 s.trajectory = airyBackend_->getTrajectory();
 
                 airyPointsCaptured_ = s.point_count;
@@ -1916,7 +2109,6 @@ void QmlBridge::onTelemetryTick() {
         } else if (s.id == "GEMINI" && geminiBackend_) {
             if (geminiBackend_->updateTelemetry()) {
                 any_updated = true;
-                s.point_count = geminiBackend_->getPointCount();
                 s.tracking_status = core::schemas::to_string(geminiBackend_->getTrackingState());
                 s.acquisition_rate = geminiBackend_->getAcquisitionRate();
                 s.slam_rate = geminiBackend_->getSlamRate();
@@ -1924,7 +2116,16 @@ void QmlBridge::onTelemetryTick() {
                     s.device_status = core::schemas::to_string(geminiAdapter_->getStatus());
                 }
                 geminiBackend_->fetchNewPoints();
-                s.map_points = geminiBackend_->getMapPoints();
+                s.raw_map_points = geminiBackend_->getMapPoints();
+                if (liveCleanupEnabled_ && !s.raw_map_points.empty()) {
+                    auto st = core::processing::PointCloudProcessor::cleanRealtimeFast(s.raw_map_points, s.map_points, liveParams);
+                    liveCleanupTimeMs_ = st.computation_time_ms;
+                    if (s.map_points.empty()) s.map_points = s.raw_map_points;
+                    emit cleanupStateChanged();
+                } else {
+                    s.map_points = s.raw_map_points;
+                }
+                s.point_count = s.map_points.size() > 0 ? s.map_points.size() : geminiBackend_->getPointCount();
                 s.trajectory = geminiBackend_->getTrajectory();
 
                 geminiPointsCaptured_ = s.point_count;
@@ -1939,7 +2140,6 @@ void QmlBridge::onTelemetryTick() {
         } else if (s.id == "VITURE" && vitureBackend_) {
             if (vitureBackend_->updateTelemetry()) {
                 any_updated = true;
-                s.point_count = vitureBackend_->getPointCount();
                 s.tracking_status = core::schemas::to_string(vitureBackend_->getTrackingState());
                 s.acquisition_rate = vitureBackend_->getAcquisitionRate();
                 s.slam_rate = vitureBackend_->getSlamRate();
@@ -1947,7 +2147,16 @@ void QmlBridge::onTelemetryTick() {
                     s.device_status = core::schemas::to_string(vitureAdapter_->getStatus());
                 }
                 vitureBackend_->fetchNewPoints();
-                s.map_points = vitureBackend_->getMapPoints();
+                s.raw_map_points = vitureBackend_->getMapPoints();
+                if (liveCleanupEnabled_ && !s.raw_map_points.empty()) {
+                    auto st = core::processing::PointCloudProcessor::cleanRealtimeFast(s.raw_map_points, s.map_points, liveParams);
+                    liveCleanupTimeMs_ = st.computation_time_ms;
+                    if (s.map_points.empty()) s.map_points = s.raw_map_points;
+                    emit cleanupStateChanged();
+                } else {
+                    s.map_points = s.raw_map_points;
+                }
+                s.point_count = s.map_points.size() > 0 ? s.map_points.size() : vitureBackend_->getPointCount();
                 s.trajectory = vitureBackend_->getTrajectory();
 
                 viturePointsCaptured_ = s.point_count;
@@ -1962,13 +2171,21 @@ void QmlBridge::onTelemetryTick() {
         } else if (s.id == "CAMERA" && cameraBackend_) {
             if (cameraBackend_->updateTelemetry()) {
                 any_updated = true;
-                s.point_count = cameraBackend_->getPointCount();
                 s.tracking_status = core::schemas::to_string(cameraBackend_->getTrackingState());
                 s.acquisition_rate = cameraBackend_->getAcquisitionRate();
                 s.slam_rate = cameraBackend_->getSlamRate();
                 s.device_status = "CONNECTED";
                 cameraBackend_->fetchNewPoints();
-                s.map_points = cameraBackend_->getMapPoints();
+                s.raw_map_points = cameraBackend_->getMapPoints();
+                if (liveCleanupEnabled_ && !s.raw_map_points.empty()) {
+                    auto st = core::processing::PointCloudProcessor::cleanRealtimeFast(s.raw_map_points, s.map_points, liveParams);
+                    liveCleanupTimeMs_ = st.computation_time_ms;
+                    if (s.map_points.empty()) s.map_points = s.raw_map_points;
+                    emit cleanupStateChanged();
+                } else {
+                    s.map_points = s.raw_map_points;
+                }
+                s.point_count = s.map_points.size() > 0 ? s.map_points.size() : cameraBackend_->getPointCount();
                 s.trajectory = cameraBackend_->getTrajectory();
 
                 cameraPointsCaptured_ = s.point_count;
@@ -1986,47 +2203,83 @@ void QmlBridge::onTelemetryTick() {
         trackSummaries.append(QString("%1: %2").arg(QString::fromStdString(s.short_name)).arg(QString::fromStdString(s.tracking_status)));
     }
 
+    emit hostMetricsChanged();
+    if (!any_updated) {
+        return;
+    }
+
     pointsCaptured_ = total_points;
+    core::schemas::Quaternion active_imu_q{0.0, 0.0, 0.0, 1.0};
+
     if (activeSensors_.size() > 1) {
-        sensorStatus_ = QString("SCANNER NODE: scanar-01 (%1 Active Sensors)").arg(activeSensors_.size());
+        activeDisplaySensor_ = "FUSED";
+        updateLiveMultiSensorFusion(true);
+        sensorStatus_ = QString("SCANNER NODE: %1 (%2 Overlapped | Anchor: %3)")
+            .arg(selectedScannerId_.isEmpty() ? "scanar-01" : selectedScannerId_)
+            .arg(activeSensors_.size())
+            .arg(activeAnchorName_);
         trackingStatus_ = trackSummaries.join(" | ");
     } else if (!activeSensors_.empty()) {
         sensorStatus_ = QString::fromStdString(activeSensors_.front().name);
         trackingStatus_ = QString::fromStdString(activeSensors_.front().tracking_status);
+        mapPoints_ = activeSensors_.front().map_points;
+        trajectory_ = activeSensors_.front().trajectory;
+        activeAnchorSensor_ = QString::fromStdString(activeSensors_.front().id);
+        activeAnchorName_ = QString::fromStdString(activeSensors_.front().short_name);
     }
 
-    // Viewport routing based on activeDisplaySensor_
+    // Route live 6-DoF pose and IMU orientation from the active anchor sensor
+    QString poseLeadId = (activeSensors_.size() > 1) ? activeAnchorSensor_ : activeDisplaySensor_;
     for (const auto& s : activeSensors_) {
-        if (s.id == activeDisplaySensor_.toStdString()) {
-            mapPoints_ = s.map_points;
-            trajectory_ = s.trajectory;
+        if (s.id == poseLeadId.toStdString()) {
+            if (activeSensors_.size() == 1) {
+                mapPoints_ = s.map_points;
+                trajectory_ = s.trajectory;
+            }
             if (s.id == "AIRY" && airyBackend_) {
                 currentPoseX_ = airyBackend_->getPose().position.x;
                 currentPoseY_ = airyBackend_->getPose().position.y;
                 currentPoseZ_ = airyBackend_->getPose().position.z;
                 currentYaw_ = airyBackend_->getCurrentYaw();
+                active_imu_q = airyBackend_->getPose().orientation;
             } else if (s.id == "GEMINI" && geminiBackend_) {
                 currentPoseX_ = geminiBackend_->getPose().position.x;
                 currentPoseY_ = geminiBackend_->getPose().position.y;
                 currentPoseZ_ = geminiBackend_->getPose().position.z;
                 currentYaw_ = geminiBackend_->getCurrentYaw();
+                active_imu_q = geminiBackend_->getPose().orientation;
             } else if (s.id == "VITURE" && vitureBackend_) {
                 currentPoseX_ = vitureBackend_->getPose().position.x;
                 currentPoseY_ = vitureBackend_->getPose().position.y;
                 currentPoseZ_ = vitureBackend_->getPose().position.z;
                 currentYaw_ = vitureBackend_->getCurrentYaw();
+                active_imu_q = vitureBackend_->getPose().orientation;
             } else if (s.id == "CAMERA" && cameraBackend_) {
                 currentPoseX_ = cameraBackend_->getPose().position.x;
                 currentPoseY_ = cameraBackend_->getPose().position.y;
                 currentPoseZ_ = cameraBackend_->getPose().position.z;
                 currentYaw_ = cameraBackend_->getCurrentYaw();
+                active_imu_q = cameraBackend_->getPose().orientation;
             }
             break;
         }
     }
-    hasMapData_ = (!mapPoints_.empty());
 
-    emit hostMetricsChanged();
+    // Real-Time Collaborative SLAM (C-SLAM) submap streaming & merged viewport
+    if (multiNodeOrchestrator_ && !mapPoints_.empty() &&
+        (multiNodeOrchestrator_->isSessionActive() || multiNodeOrchestrator_->cslam().scannerCount() > 0)) {
+        multiNodeOrchestrator_->publishLocalSubmap(mapPoints_, trajectory_, active_imu_q, false);
+        if (selectedNodeViewIndex_ == -1) {
+            mapPoints_ = multiNodeOrchestrator_->getMergedCslamPointCloud(cslamColorByScanner_);
+            trajectory_ = multiNodeOrchestrator_->cslam().getMergedTrajectory();
+            pointsCaptured_ = static_cast<qlonglong>(mapPoints_.size());
+        }
+        emit cslamStateChanged();
+    }
+
+    hasMapData_ = (!mapPoints_.empty());
+    invalidateDisplayPointsCache();
+
     emit poseChanged();
     emit trackingStatusChanged();
     emit sensorStatusChanged();
@@ -2036,9 +2289,16 @@ void QmlBridge::onTelemetryTick() {
 }
 
 QVariantList QmlBridge::getDisplayPoints(int maxPoints) const {
-    QVariantList list;
-    if (mapPoints_.empty()) return list;
+    if (mapPoints_.empty()) {
+        return QVariantList();
+    }
+    if (displayPointsCacheValid_ &&
+        cachedMaxPoints_ == maxPoints &&
+        cachedMapPointsSize_ == mapPoints_.size()) {
+        return cachedDisplayPoints_;
+    }
 
+    QVariantList list;
     size_t total = mapPoints_.size();
     size_t step = (total > static_cast<size_t>(maxPoints)) ? (total / maxPoints) : 1;
     if (step == 0) step = 1;
@@ -2077,6 +2337,11 @@ QVariantList QmlBridge::getDisplayPoints(int maxPoints) const {
         p.append(pt.has_color);
         list.append(QVariant::fromValue(p));
     }
+
+    cachedDisplayPoints_ = list;
+    cachedMaxPoints_ = maxPoints;
+    cachedMapPointsSize_ = total;
+    displayPointsCacheValid_ = true;
     return list;
 }
 
@@ -2161,6 +2426,7 @@ bool QmlBridge::loadSavedCapture(const QString& captureId) {
                         }
                     } catch (...) {}
                 }
+                invalidateDisplayPointsCache();
                 emit pointsCapturedChanged();
                 emit trajectoryChanged();
                 emit mapDataUpdated();
@@ -2183,6 +2449,10 @@ void QmlBridge::saveMapPcd(const std::string& filepath, const std::vector<core::
         }
     }
 
+    std::string chunk;
+    chunk.reserve(65536);
+    char line_buf[128];
+
     if (has_color) {
         ofs << "# .PCD v0.7 - Point Cloud Data file format\n"
             << "VERSION 0.7\n"
@@ -2198,7 +2468,15 @@ void QmlBridge::saveMapPcd(const std::string& filepath, const std::vector<core::
 
         for (const auto& pt : points) {
             uint32_t rgb_packed = ((uint32_t)pt.r << 16) | ((uint32_t)pt.g << 8) | ((uint32_t)pt.b);
-            ofs << pt.x << " " << pt.y << " " << pt.z << " " << rgb_packed << " " << pt.intensity << "\n";
+            int n = std::snprintf(line_buf, sizeof(line_buf), "%.5g %.5g %.5g %u %.4g\n",
+                                  pt.x, pt.y, pt.z, rgb_packed, pt.intensity);
+            if (n > 0) {
+                chunk.append(line_buf, static_cast<size_t>(n));
+                if (chunk.size() >= 60000) {
+                    ofs.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+                    chunk.clear();
+                }
+            }
         }
     } else {
         ofs << "# .PCD v0.7 - Point Cloud Data file format\n"
@@ -2214,8 +2492,19 @@ void QmlBridge::saveMapPcd(const std::string& filepath, const std::vector<core::
             << "DATA ascii\n";
 
         for (const auto& pt : points) {
-            ofs << pt.x << " " << pt.y << " " << pt.z << " " << pt.intensity << "\n";
+            int n = std::snprintf(line_buf, sizeof(line_buf), "%.5g %.5g %.5g %.4g\n",
+                                  pt.x, pt.y, pt.z, pt.intensity);
+            if (n > 0) {
+                chunk.append(line_buf, static_cast<size_t>(n));
+                if (chunk.size() >= 60000) {
+                    ofs.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+                    chunk.clear();
+                }
+            }
         }
+    }
+    if (!chunk.empty()) {
+        ofs.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
     }
     ofs.close();
 }
@@ -2228,6 +2517,7 @@ bool QmlBridge::loadMapPcd(const std::string& filepath, std::vector<core::schema
     std::string line;
     bool in_data = false;
     bool has_rgb_field = false;
+    size_t declared_points = 0;
 
     while (std::getline(ifs, line)) {
         if (!in_data) {
@@ -2235,47 +2525,68 @@ bool QmlBridge::loadMapPcd(const std::string& filepath, std::vector<core::schema
                 if (line.find("rgb") != std::string::npos || line.find("RGB") != std::string::npos) {
                     has_rgb_field = true;
                 }
+            } else if (line.rfind("POINTS ", 0) == 0) {
+                declared_points = static_cast<size_t>(std::strtoull(line.c_str() + 7, nullptr, 10));
             } else if (line.rfind("DATA", 0) == 0) {
                 in_data = true;
+                if (declared_points > 0 && declared_points < 20000000) {
+                    out_points.reserve(declared_points);
+                }
             }
             continue;
         }
 
-        std::istringstream iss(line);
+        const char* p = line.c_str();
+        while (*p == ' ' || *p == '\t') ++p;
+        if (*p == '\0' || *p == '\r' || *p == '\n' || *p == '#') continue;
+
+        char* end = nullptr;
         core::schemas::PointXYZI pt;
+        pt.x = std::strtof(p, &end);
+        if (end == p) continue;
+        p = end;
+        pt.y = std::strtof(p, &end);
+        if (end == p) continue;
+        p = end;
+        pt.z = std::strtof(p, &end);
+        if (end == p) continue;
+        p = end;
+
+        if (!std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z)) continue;
+
         if (has_rgb_field) {
-            std::string rgb_token;
-            if (iss >> pt.x >> pt.y >> pt.z >> rgb_token) {
-                uint32_t rgb_packed = 0;
-                if (rgb_token.find('.') != std::string::npos || 
-                    rgb_token.find('e') != std::string::npos || 
-                    rgb_token.find('E') != std::string::npos) {
-                    double d = std::strtod(rgb_token.c_str(), nullptr);
-                    float rgb_f = static_cast<float>(d);
-                    std::memcpy(&rgb_packed, &rgb_f, sizeof(uint32_t));
-                } else {
-                    rgb_packed = static_cast<uint32_t>(std::strtoul(rgb_token.c_str(), nullptr, 10));
-                }
-                pt.r = static_cast<uint8_t>((rgb_packed >> 16) & 0xFF);
-                pt.g = static_cast<uint8_t>((rgb_packed >> 8) & 0xFF);
-                pt.b = static_cast<uint8_t>(rgb_packed & 0xFF);
-                pt.has_color = true;
-                if (!(iss >> pt.intensity)) {
-                    pt.intensity = 1.0f;
-                }
-                out_points.push_back(pt);
+            while (*p == ' ' || *p == '\t') ++p;
+            if (*p == '\0' || *p == '\r' || *p == '\n') continue;
+
+            const char* tok_start = p;
+            bool is_float_rgb = false;
+            while (*p != '\0' && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n') {
+                if (*p == '.' || *p == 'e' || *p == 'E') is_float_rgb = true;
+                ++p;
             }
+            uint32_t rgb_packed = 0;
+            if (is_float_rgb) {
+                float rgb_f = std::strtof(tok_start, nullptr);
+                std::memcpy(&rgb_packed, &rgb_f, sizeof(uint32_t));
+            } else {
+                rgb_packed = static_cast<uint32_t>(std::strtoul(tok_start, nullptr, 10));
+            }
+            pt.r = static_cast<uint8_t>((rgb_packed >> 16) & 0xFF);
+            pt.g = static_cast<uint8_t>((rgb_packed >> 8) & 0xFF);
+            pt.b = static_cast<uint8_t>(rgb_packed & 0xFF);
+            pt.has_color = true;
+
+            float inten = std::strtof(p, &end);
+            pt.intensity = (end != p && std::isfinite(inten)) ? inten : 1.0f;
+            out_points.push_back(pt);
         } else {
-            if (iss >> pt.x >> pt.y >> pt.z) {
-                if (!(iss >> pt.intensity)) {
-                    pt.intensity = 1.0f;
-                }
-                pt.r = 255;
-                pt.g = 255;
-                pt.b = 255;
-                pt.has_color = false;
-                out_points.push_back(pt);
-            }
+            float inten = std::strtof(p, &end);
+            pt.intensity = (end != p && std::isfinite(inten)) ? inten : 1.0f;
+            pt.r = 255;
+            pt.g = 255;
+            pt.b = 255;
+            pt.has_color = false;
+            out_points.push_back(pt);
         }
     }
     return true;
@@ -2298,8 +2609,6 @@ void QmlBridge::pan3D(qreal deltaX, qreal deltaY) {
     double radYaw = camYaw3D_ * M_PI / 180.0;
     double radPitch = camPitch3D_ * M_PI / 180.0;
 
-    double fx = std::cos(radPitch) * std::sin(radYaw);
-    double fy = std::cos(radPitch) * std::cos(radYaw);
     double rx = std::cos(radYaw);
     double ry = -std::sin(radYaw);
 
@@ -2371,6 +2680,64 @@ void QmlBridge::recenter2D() {
     pan2DX_ = currentPoseX_;
     pan2DY_ = currentPoseY_;
     zoom2D_ = 40.0;
+    emit cam2DChanged();
+}
+
+void QmlBridge::autoFitCameraToMapBounds() {
+    if (mapPoints_.empty()) {
+        recenter3D();
+        recenter2D();
+        return;
+    }
+
+    float min_x = std::numeric_limits<float>::max();
+    float max_x = std::numeric_limits<float>::lowest();
+    float min_y = std::numeric_limits<float>::max();
+    float max_y = std::numeric_limits<float>::lowest();
+    float min_z = std::numeric_limits<float>::max();
+    float max_z = std::numeric_limits<float>::lowest();
+
+    size_t valid_count = 0;
+    const size_t n = mapPoints_.size();
+    const size_t step = (n > 8192) ? (n / 4096) : 1;
+    for (size_t i = 0; i < n; i += step) {
+        const auto& pt = mapPoints_[i];
+        if (!std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z)) continue;
+        if (pt.x < min_x) min_x = pt.x;
+        if (pt.x > max_x) max_x = pt.x;
+        if (pt.y < min_y) min_y = pt.y;
+        if (pt.y > max_y) max_y = pt.y;
+        if (pt.z < min_z) min_z = pt.z;
+        if (pt.z > max_z) max_z = pt.z;
+        ++valid_count;
+    }
+
+    if (valid_count == 0) {
+        recenter3D();
+        recenter2D();
+        return;
+    }
+
+    const double cx = 0.5 * (static_cast<double>(min_x) + static_cast<double>(max_x));
+    const double cy = 0.5 * (static_cast<double>(min_y) + static_cast<double>(max_y));
+    const double cz = 0.5 * (static_cast<double>(min_z) + static_cast<double>(max_z));
+    const double dx = static_cast<double>(max_x - min_x);
+    const double dy = static_cast<double>(max_y - min_y);
+    const double dz = static_cast<double>(max_z - min_z);
+    const double span = std::max({dx, dy, dz, 1.0});
+
+    camTargetX3D_ = cx;
+    camTargetY3D_ = cy;
+    camTargetZ3D_ = cz;
+    camDistance3D_ = std::clamp(span * 1.15, 2.5, 120.0);
+    camYaw3D_ = 45.0;
+    camPitch3D_ = 30.0;
+    emit cam3DChanged();
+
+    pan2DX_ = cx;
+    pan2DY_ = cy;
+    const double xy_span = std::max({dx, dy, 1.0});
+    zoom2D_ = std::clamp(500.0 / (xy_span * 1.25), 4.0, 200.0);
     emit cam2DChanged();
 }
 
@@ -2513,6 +2880,7 @@ bool QmlBridge::acceptOrientationDiagRotation() {
     std::string s_id = orientationDiagSensor_.toStdString();
 
     // 1. Permanently rotate current in-memory map points and trajectory
+    bool updated_from_active_sensor = false;
     for (auto& s : activeSensors_) {
         if (s.id == s_id) {
             for (auto& pt : s.map_points) {
@@ -2534,13 +2902,14 @@ bool QmlBridge::acceptOrientationDiagRotation() {
             if (activeDisplaySensor_.toStdString() == s_id) {
                 mapPoints_ = s.map_points;
                 trajectory_ = s.trajectory;
+                updated_from_active_sensor = true;
             }
             break;
         }
     }
 
-    // Also update global mapPoints_ if matching
-    if (activeDisplaySensor_.toStdString() == s_id) {
+    // Also update global mapPoints_ if loaded statically (e.g. diagnostic PCD without active sensor)
+    if (!updated_from_active_sensor && activeDisplaySensor_.toStdString() == s_id) {
         for (auto& pt : mapPoints_) {
             double rx = orientationDiagR_[0][0] * pt.x + orientationDiagR_[0][1] * pt.y + orientationDiagR_[0][2] * pt.z;
             double ry = orientationDiagR_[1][0] * pt.x + orientationDiagR_[1][1] * pt.y + orientationDiagR_[1][2] * pt.z;
@@ -2559,12 +2928,14 @@ bool QmlBridge::acceptOrientationDiagRotation() {
         }
     }
 
-    // 2. Save candidate transform to profiles/validated/<sensor>_profile.json
+    // 2. Save candidate transform to profiles/validated/<sensor>_profile.json (or experimental for CAMERA)
     fs::path prof_path;
     if (s_id == "GEMINI") {
         prof_path = fs::path("/home/scanar/av_scan/profiles/validated/gemini_336l_profile.json");
     } else if (s_id == "VITURE") {
         prof_path = fs::path("/home/scanar/av_scan/profiles/validated/viture_ultra_profile.json");
+    } else if (s_id == "CAMERA") {
+        prof_path = fs::path("/home/scanar/av_scan/profiles/experimental/camera_32e4_4802_2023081002.json");
     }
 
     if (!prof_path.empty() && fs::exists(prof_path)) {
@@ -2575,7 +2946,7 @@ bool QmlBridge::acceptOrientationDiagRotation() {
 
             pj["canonical_av_transform"] = {
                 {"target_convention", "CANONICAL_AV (+X Fwd, +Y Left, +Z Up, Ground XY)"},
-                {"source_frame", s_id == "GEMINI" ? "camera_link" : "carina_gl_origin"},
+                {"source_frame", s_id == "GEMINI" ? "camera_link" : (s_id == "VITURE" ? "carina_gl_origin" : "optical_camera_frame")},
                 {"status", "VALIDATED"},
                 {"roll_deg", orientationDiagRoll_},
                 {"pitch_deg", orientationDiagPitch_},
@@ -2610,9 +2981,12 @@ bool QmlBridge::acceptOrientationDiagRotation() {
         daemon_tf_path = "/home/scanar/av_scan/core/drivers/gemini/canonical_transform.json";
     } else if (s_id == "VITURE") {
         daemon_tf_path = "/home/scanar/av_scan/core/drivers/viture/canonical_transform.json";
+    } else if (s_id == "CAMERA") {
+        daemon_tf_path = "/home/scanar/av_scan/core/drivers/uvc/canonical_transform.json";
     }
     if (!daemon_tf_path.empty()) {
         try {
+            fs::create_directories(daemon_tf_path.parent_path());
             nlohmann::json dj = {
                 {"sensor", s_id},
                 {"roll_deg", orientationDiagRoll_},
@@ -2638,6 +3012,76 @@ bool QmlBridge::acceptOrientationDiagRotation() {
     updateOrientationDiagMatrix();
 
     AV_LOG_INFO("QmlBridge", "Orientation accepted and canonical transform persisted for " + s_id);
+    return true;
+}
+
+bool QmlBridge::autoLevelOrientationDiag() {
+    if (orientationDiagIsFrozen()) {
+        orientationDiagStatusMsg_ = "Airy is FROZEN Ground Truth reference; auto-level locked.";
+        emit orientationDiagChanged();
+        return false;
+    }
+    if (mapPoints_.size() < 50) {
+        orientationDiagStatusMsg_ = "Insufficient point cloud data (< 50 pts) for RANSAC floor auto-level.";
+        emit orientationDiagChanged();
+        return false;
+    }
+
+    // Apply current orientationDiagR_ to a subsampled working copy of mapPoints_
+    std::vector<core::schemas::PointXYZI> working_pts;
+    const size_t step = (mapPoints_.size() > 25000) ? (mapPoints_.size() / 25000) : 1;
+    working_pts.reserve(mapPoints_.size() / step + 1);
+    for (size_t i = 0; i < mapPoints_.size(); i += step) {
+        core::schemas::PointXYZI pt = mapPoints_[i];
+        double rx = orientationDiagR_[0][0] * pt.x + orientationDiagR_[0][1] * pt.y + orientationDiagR_[0][2] * pt.z;
+        double ry = orientationDiagR_[1][0] * pt.x + orientationDiagR_[1][1] * pt.y + orientationDiagR_[1][2] * pt.z;
+        double rz = orientationDiagR_[2][0] * pt.x + orientationDiagR_[2][1] * pt.y + orientationDiagR_[2][2] * pt.z;
+        pt.x = static_cast<float>(rx);
+        pt.y = static_cast<float>(ry);
+        pt.z = static_cast<float>(rz);
+        working_pts.push_back(pt);
+    }
+
+    auto gp = core::processing::PointCloudProcessor::detectAndAlignGroundPlane(
+        working_pts, 0.04, 150, 45.0, false, false);
+
+    if (!gp.found) {
+        orientationDiagStatusMsg_ = "RANSAC could not find a dominant floor plane within 45 deg of +Z.";
+        emit orientationDiagChanged();
+        return false;
+    }
+
+    // Compose R_total = R_align * R_current
+    Eigen::Matrix3d R_current;
+    Eigen::Matrix3d R_align;
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            R_current(r, c) = orientationDiagR_[r][c];
+            R_align(r, c) = gp.alignment_transform[r][c];
+        }
+    }
+    Eigen::Matrix3d R_total = R_align * R_current;
+
+    // Decompose R_total = Rz(yaw) * Ry(pitch) * Rx(roll)
+    double sin_pitch = std::clamp(-R_total(2, 0), -1.0, 1.0);
+    double pitch_rad = std::asin(sin_pitch);
+    double roll_rad = 0.0;
+    double yaw_rad = 0.0;
+    if (std::abs(std::cos(pitch_rad)) > 1e-6) {
+        roll_rad = std::atan2(R_total(2, 1), R_total(2, 2));
+        yaw_rad = std::atan2(R_total(1, 0), R_total(0, 0));
+    } else {
+        roll_rad = std::atan2(-R_total(1, 2), R_total(1, 1));
+        yaw_rad = 0.0;
+    }
+
+    orientationDiagRoll_ = roll_rad * 180.0 / M_PI;
+    orientationDiagPitch_ = pitch_rad * 180.0 / M_PI;
+    orientationDiagYaw_ = yaw_rad * 180.0 / M_PI;
+    orientationDiagStatusMsg_ = QString("Auto-Leveled Floor via RANSAC (%1 inliers, corrected %2° tilt).")
+                                    .arg(gp.inlier_count)
+                                    .arg(gp.tilt_deg, 0, 'f', 2);
+    updateOrientationDiagMatrix();
     return true;
 }
 
@@ -3024,6 +3468,42 @@ void QmlBridge::setSelectedNodeViewIndex(int index) {
     if (selectedNodeViewIndex_ != index) {
         selectedNodeViewIndex_ = index;
         emit selectedNodeViewChanged();
+        if (selectedNodeViewIndex_ == -1) {
+            refreshCslamMergedCloud();
+        } else if (selectedNodeViewIndex_ == 0) {
+            for (const auto& s : activeSensors_) {
+                if (s.id == activeDisplaySensor_.toStdString()) {
+                    mapPoints_ = s.map_points;
+                    trajectory_ = s.trajectory;
+                    pointsCaptured_ = static_cast<qlonglong>(mapPoints_.size());
+                    hasMapData_ = !mapPoints_.empty();
+                    invalidateDisplayPointsCache();
+                    emit pointsCapturedChanged();
+                    emit trajectoryChanged();
+                    emit mapDataUpdated();
+                    break;
+                }
+            }
+        } else if (multiNodeOrchestrator_ && selectedNodeViewIndex_ > 0) {
+            auto nodes = multiNodeOrchestrator_->getCslamScannerNodes();
+            int idx = 1;
+            for (const auto& n : nodes) {
+                if (n.node_uuid != multiNodeOrchestrator_->getLocalNodeUuid()) {
+                    if (idx == selectedNodeViewIndex_) {
+                        mapPoints_ = multiNodeOrchestrator_->cslam().getScannerPointCloud(n.node_uuid, cslamColorByScanner_);
+                        trajectory_ = n.trajectory;
+                        pointsCaptured_ = static_cast<qlonglong>(mapPoints_.size());
+                        hasMapData_ = !mapPoints_.empty();
+                        invalidateDisplayPointsCache();
+                        emit pointsCapturedChanged();
+                        emit trajectoryChanged();
+                        emit mapDataUpdated();
+                        break;
+                    }
+                    idx++;
+                }
+            }
+        }
     }
 }
 
@@ -3032,6 +3512,9 @@ void QmlBridge::selectNodeView(int index) {
 }
 
 QString QmlBridge::selectedNodeViewName() const {
+    if (selectedNodeViewIndex_ == -1) {
+        return QString("Real-Time Merged C-SLAM (%1 Scanners)").arg(cslamScannerCount());
+    }
     if (selectedNodeViewIndex_ == 0 || !multiNodeOrchestrator_) {
         return QString("Local Device (%1)").arg(nodeDisplayName());
     }
@@ -3045,7 +3528,242 @@ QString QmlBridge::selectedNodeViewName() const {
             idx++;
         }
     }
+    auto cslamNodes = multiNodeOrchestrator_->getCslamScannerNodes();
+    idx = 1;
+    for (const auto& n : cslamNodes) {
+        if (n.node_uuid != multiNodeOrchestrator_->getLocalNodeUuid()) {
+            if (idx == selectedNodeViewIndex_) {
+                return QString("Scanner: %1 [%2]").arg(QString::fromStdString(n.display_name)).arg(QString::fromStdString(core::multi_node::to_string(n.alignment_state)));
+            }
+            idx++;
+        }
+    }
     return QString("Local Device (%1)").arg(nodeDisplayName());
+}
+
+void QmlBridge::setCslamColorByScanner(bool enabled) {
+    if (cslamColorByScanner_ != enabled) {
+        cslamColorByScanner_ = enabled;
+        if (selectedNodeViewIndex_ == -1) {
+            refreshCslamMergedCloud();
+        } else {
+            emit cslamStateChanged();
+        }
+    }
+}
+
+int QmlBridge::cslamScannerCount() const {
+    if (!multiNodeOrchestrator_) return 0;
+    return static_cast<int>(multiNodeOrchestrator_->cslam().scannerCount());
+}
+
+int QmlBridge::cslamSnappedCount() const {
+    if (!multiNodeOrchestrator_) return 0;
+    return static_cast<int>(multiNodeOrchestrator_->cslam().snappedScannerCount());
+}
+
+qlonglong QmlBridge::cslamMergedPointCount() const {
+    if (!multiNodeOrchestrator_) return 0;
+    auto nodes = multiNodeOrchestrator_->getCslamScannerNodes();
+    qlonglong total = 0;
+    for (const auto& n : nodes) {
+        total += static_cast<qlonglong>(n.raw_points.size());
+    }
+    return total;
+}
+
+QVariantList QmlBridge::cslamNodesList() const {
+    QVariantList list;
+    if (!multiNodeOrchestrator_) return list;
+    auto nodes = multiNodeOrchestrator_->getCslamScannerNodes();
+    for (const auto& n : nodes) {
+        QVariantMap m;
+        m["uuid"] = QString::fromStdString(n.node_uuid);
+        m["shortUuid"] = QString::fromStdString(n.node_uuid.substr(0, 8));
+        m["displayName"] = QString::fromStdString(n.display_name);
+        m["scannerIndex"] = static_cast<int>(n.scanner_index);
+        m["colorHex"] = QString("#%1%2%3")
+            .arg(static_cast<int>(n.color_r), 2, 16, QChar('0'))
+            .arg(static_cast<int>(n.color_g), 2, 16, QChar('0'))
+            .arg(static_cast<int>(n.color_b), 2, 16, QChar('0'));
+        m["alignmentState"] = QString::fromStdString(core::multi_node::to_string(n.alignment_state));
+        m["isSnapped"] = (n.alignment_state == core::multi_node::CSlamAlignmentState::ANCHOR ||
+                          n.alignment_state == core::multi_node::CSlamAlignmentState::OVERLAP_LOCKED);
+        m["isAnchor"] = (n.alignment_state == core::multi_node::CSlamAlignmentState::ANCHOR);
+        m["overlapPercent"] = QString::number(n.overlap_ratio * 100.0, 'f', 1) + "%";
+        m["rmseMm"] = QString::number(n.inlier_rmse_m * 1000.0, 'f', 1) + " mm";
+        m["pointCount"] = static_cast<qlonglong>(n.raw_points.size());
+        m["offsetMeters"] = QString("(%1, %2, %3) m")
+            .arg(n.T_world_from_scanner.matrix[0][3], 0, 'f', 1)
+            .arg(n.T_world_from_scanner.matrix[1][3], 0, 'f', 1)
+            .arg(n.T_world_from_scanner.matrix[2][3], 0, 'f', 1);
+        list.append(m);
+    }
+    return list;
+}
+
+int QmlBridge::triggerCslamSnap() {
+    if (!multiNodeOrchestrator_) return 0;
+    int snapped = multiNodeOrchestrator_->triggerCslamOverlapEvaluation();
+    refreshCslamMergedCloud();
+    cslamStatusSummary_ = QString("Evaluated overlap across %1 scanners: %2 snapped into unified frame (%3 newly locked).")
+        .arg(cslamScannerCount())
+        .arg(cslamSnappedCount())
+        .arg(snapped);
+    emit cslamStateChanged();
+    return snapped;
+}
+
+void QmlBridge::addSimulatedCslamScanner(const QString& scannerName, bool overlapping) {
+    if (!multiNodeOrchestrator_) return;
+
+    // Ensure local scanner has its submap registered as Anchor first
+    if (multiNodeOrchestrator_->cslam().scannerCount() == 0) {
+        std::vector<core::schemas::PointXYZI> anchor_pts = mapPoints_;
+        if (anchor_pts.empty()) {
+            // Generate synthetic anchor room geometry (floor + 2 walls + table)
+            for (int ix = -25; ix <= 25; ++ix) {
+                for (int iy = -25; iy <= 25; ++iy) {
+                    core::schemas::PointXYZI p{};
+                    p.x = ix * 0.10f;
+                    p.y = iy * 0.10f;
+                    p.z = 0.0f;
+                    p.intensity = 120.0f;
+                    p.r = 180; p.g = 190; p.b = 200;
+                    anchor_pts.push_back(p);
+                }
+            }
+            for (int ix = -25; ix <= 25; ++ix) {
+                for (int iz = 0; iz <= 20; ++iz) {
+                    core::schemas::PointXYZI w1{};
+                    w1.x = ix * 0.10f; w1.y = 2.5f; w1.z = iz * 0.10f;
+                    w1.intensity = 160.0f; w1.r = 200; w1.g = 210; w1.b = 220;
+                    anchor_pts.push_back(w1);
+
+                    core::schemas::PointXYZI w2{};
+                    w2.x = 2.5f; w2.y = ix * 0.10f; w2.z = iz * 0.10f;
+                    w2.intensity = 150.0f; w2.r = 190; w2.g = 200; w2.b = 210;
+                    anchor_pts.push_back(w2);
+                }
+            }
+        }
+        core::schemas::Quaternion q_id{0.0, 0.0, 0.0, 1.0};
+        multiNodeOrchestrator_->publishLocalSubmap(anchor_pts, trajectory_, q_id, false);
+    }
+
+    simulatedCslamCounter_++;
+    std::string sim_uuid = "sim-scanar-" + std::to_string(simulatedCslamCounter_) + "-node";
+    std::string sim_name = scannerName.isEmpty()
+        ? ("scanAR-" + std::to_string(simulatedCslamCounter_ + 1))
+        : scannerName.toStdString();
+
+    // Build point cloud from anchor reference
+    auto nodes = multiNodeOrchestrator_->getCslamScannerNodes();
+    std::vector<core::schemas::PointXYZI> ref_pts;
+    if (!nodes.empty()) {
+        ref_pts = nodes.front().raw_points;
+    }
+
+    std::vector<core::schemas::PointXYZI> sim_pts;
+    core::schemas::Quaternion imu_q{0.0, 0.0, 0.0, 1.0};
+
+    if (overlapping && !ref_pts.empty()) {
+        // Overlapping scan rotated by 15 degrees yaw + small translation (0.35m, -0.25m, 0.0f)
+        double yaw = 15.0 * M_PI / 180.0;
+        double cy = std::cos(yaw), sy = std::sin(yaw);
+        imu_q.x = 0.0;
+        imu_q.y = 0.0;
+        imu_q.z = std::sin(yaw * 0.5);
+        imu_q.w = std::cos(yaw * 0.5);
+
+        sim_pts.reserve(ref_pts.size());
+        for (size_t i = 0; i < ref_pts.size(); ++i) {
+            const auto& p = ref_pts[i];
+            // Keep 75% overlapping region + add new extension points
+            core::schemas::PointXYZI sp = p;
+            if (i % 5 == 0) {
+                sp.x += 1.2f; // Extended scanned area
+            }
+            // Express in scanner's local coordinates (inverse of yaw + shift)
+            double dx = sp.x - 0.35;
+            double dy = sp.y + 0.25;
+            sp.x = static_cast<float>(cy * dx + sy * dy);
+            sp.y = static_cast<float>(-sy * dx + cy * dy);
+            sim_pts.push_back(sp);
+        }
+    } else {
+        // Non-overlapping distinct structure (e.g. a cylindrical pillar / separate room dome)
+        // Oriented by a 35-degree IMU heading so IMU orientation is visible while separated
+        double yaw = (35.0 * simulatedCslamCounter_) * M_PI / 180.0;
+        imu_q.x = 0.0;
+        imu_q.y = 0.0;
+        imu_q.z = std::sin(yaw * 0.5);
+        imu_q.w = std::cos(yaw * 0.5);
+
+        for (int a = 0; a < 72; ++a) {
+            double theta = a * (2.0 * M_PI / 72.0);
+            for (int h = 0; h < 25; ++h) {
+                core::schemas::PointXYZI sp{};
+                double r = 1.4 + 0.15 * std::sin(h * 0.3);
+                sp.x = static_cast<float>(r * std::cos(theta));
+                sp.y = static_cast<float>(r * std::sin(theta));
+                sp.z = static_cast<float>(h * 0.10);
+                sp.intensity = 180.0f;
+                sp.r = 200; sp.g = 200; sp.b = 200;
+                sim_pts.push_back(sp);
+            }
+        }
+    }
+
+    std::vector<core::schemas::Pose3D> sim_traj;
+    for (int t = 0; t < 12; ++t) {
+        core::schemas::Pose3D pose{};
+        pose.position.x = t * 0.15;
+        pose.position.y = 0.1 * std::sin(t * 0.5);
+        pose.position.z = 0.0;
+        pose.orientation = imu_q;
+        sim_traj.push_back(pose);
+    }
+
+    multiNodeOrchestrator_->cslam().updateScannerSubmap(
+        sim_uuid, sim_name, sim_pts, sim_traj, imu_q, overlapping);
+
+    selectedNodeViewIndex_ = -1; // Automatically switch to Merged C-SLAM view
+    emit selectedNodeViewChanged();
+    refreshCslamMergedCloud();
+
+    cslamStatusSummary_ = QString("Added %1 (%2) — %3 total scanners (%4 snapped, %5 IMU-separated).")
+        .arg(QString::fromStdString(sim_name))
+        .arg(overlapping ? "Overlapping -> Snapped" : "Non-Overlapping -> Separated IMU Offset")
+        .arg(cslamScannerCount())
+        .arg(cslamSnappedCount())
+        .arg(cslamScannerCount() - cslamSnappedCount());
+    emit cslamStateChanged();
+}
+
+void QmlBridge::clearCslamScanners() {
+    if (!multiNodeOrchestrator_) return;
+    multiNodeOrchestrator_->cslam().clear();
+    simulatedCslamCounter_ = 0;
+    selectedNodeViewIndex_ = 0;
+    cslamStatusSummary_ = "Cleared C-SLAM collaborative submaps.";
+    emit selectedNodeViewChanged();
+    emit cslamStateChanged();
+}
+
+void QmlBridge::refreshCslamMergedCloud() {
+    if (!multiNodeOrchestrator_) return;
+    if (selectedNodeViewIndex_ == -1 && multiNodeOrchestrator_->cslam().scannerCount() > 0) {
+        mapPoints_ = multiNodeOrchestrator_->getMergedCslamPointCloud(cslamColorByScanner_);
+        trajectory_ = multiNodeOrchestrator_->cslam().getMergedTrajectory();
+        pointsCaptured_ = static_cast<qlonglong>(mapPoints_.size());
+        hasMapData_ = !mapPoints_.empty();
+        invalidateDisplayPointsCache();
+        emit pointsCapturedChanged();
+        emit trajectoryChanged();
+        emit mapDataUpdated();
+    }
+    emit cslamStateChanged();
 }
 
 void QmlBridge::setNodeDisplayName(const QString& name) {
@@ -3079,11 +3797,14 @@ bool QmlBridge::createMultiNodeSession(const QString& sessionName) {
     bool ok = multiNodeOrchestrator_->createSession(projectId_.toStdString(), sName.toStdString());
     if (ok) {
         currentSessionId_ = QString::fromStdString(multiNodeOrchestrator_->getActiveSessionId());
-        multiNodeNotice_ = QString("Session %1 active as Coordinator.").arg(currentSessionId_);
+        selectedNodeViewIndex_ = -1;
+        multiNodeNotice_ = QString("Session %1 active as Coordinator (Real-Time C-SLAM Merged View).").arg(currentSessionId_);
         emit multiNodeSessionChanged();
         emit sessionMembersChanged();
+        emit selectedNodeViewChanged();
         emit multiNodeNoticeChanged();
-        emit notification("Multi-Node Session", "Created multi-node session as Coordinator.");
+        emit cslamStateChanged();
+        emit notification("Multi-Node Session", "Created multi-node C-SLAM session as Coordinator.");
     }
     return ok;
 }
@@ -3104,10 +3825,13 @@ bool QmlBridge::joinMultiNodeSession(const QString& sessionId, const QString& co
     bool ok = multiNodeOrchestrator_->joinSession(sessionId.toStdString(), coordIp.toStdString(), coordPort);
     if (ok) {
         currentSessionId_ = sessionId;
-        multiNodeNotice_ = QString("Connected to session %1 as Participant.").arg(sessionId);
+        selectedNodeViewIndex_ = -1;
+        multiNodeNotice_ = QString("Connected to session %1 as Participant (Real-Time C-SLAM Merged View).").arg(sessionId);
         emit multiNodeSessionChanged();
         emit sessionMembersChanged();
+        emit selectedNodeViewChanged();
         emit multiNodeNoticeChanged();
+        emit cslamStateChanged();
         emit notification("Joined Session", QString("Connected to session %1 at %2:%3").arg(sessionId).arg(coordIp).arg(coordPort));
     } else {
         emit errorOccurred("Join Failed", QString("Failed to join session %1 at %2:%3").arg(sessionId).arg(coordIp).arg(coordPort));
@@ -3118,10 +3842,13 @@ bool QmlBridge::joinMultiNodeSession(const QString& sessionId, const QString& co
 bool QmlBridge::leaveMultiNodeSession() {
     if (!multiNodeOrchestrator_) return false;
     bool ok = multiNodeOrchestrator_->leaveSession();
+    selectedNodeViewIndex_ = 0;
     multiNodeNotice_ = "Single-node standalone mode.";
     emit multiNodeSessionChanged();
     emit sessionMembersChanged();
+    emit selectedNodeViewChanged();
     emit multiNodeNoticeChanged();
+    emit cslamStateChanged();
     return ok;
 }
 
@@ -3856,6 +4583,716 @@ void QmlBridge::clearActiveRegistration() {
     emit activeRegistrationChanged();
     emit pointsCapturedChanged();
     emit mapDataUpdated();
+}
+
+// =============================================================================
+// Milestone 12: Point Cloud Cleanup, Post-Processing & Multi-Format Export
+// =============================================================================
+
+void QmlBridge::setLiveCleanupEnabled(bool enabled) {
+    if (liveCleanupEnabled_ == enabled) return;
+    liveCleanupEnabled_ = enabled;
+
+    core::processing::CleanupParams liveParams;
+    liveParams.enable_voxel_downsample = true;
+    liveParams.voxel_leaf_size_m = 0.025f;
+    liveParams.enable_ror = true;
+    liveParams.ror_radius_m = 0.08;
+    liveParams.ror_min_neighbors = 3;
+    liveParams.enable_sor = true;
+    liveParams.sor_std_mul = 2.0;
+    liveParams.enable_ground_alignment = liveGroundLockEnabled_;
+    liveParams.align_ground_to_z_zero = true;
+
+    // Immediately re-evaluate active display sensor buffer if we have raw_map_points
+    for (auto& s : activeSensors_) {
+        if (!s.raw_map_points.empty()) {
+            if (liveCleanupEnabled_) {
+                auto st = core::processing::PointCloudProcessor::cleanRealtimeFast(
+                    s.raw_map_points, s.map_points, liveParams);
+                liveCleanupTimeMs_ = st.computation_time_ms;
+                if (s.map_points.empty()) s.map_points = s.raw_map_points;
+            } else {
+                s.map_points = s.raw_map_points;
+                liveCleanupTimeMs_ = 0.0;
+            }
+            s.point_count = s.map_points.size();
+            if (s.id == activeDisplaySensor_.toStdString()) {
+                mapPoints_ = s.map_points;
+                pointsCaptured_ = mapPoints_.size();
+                emit pointsCapturedChanged();
+                emit mapDataUpdated();
+            }
+        }
+    }
+    emit cleanupStateChanged();
+}
+
+void QmlBridge::setLiveGroundLockEnabled(bool enabled) {
+    if (liveGroundLockEnabled_ == enabled) return;
+    liveGroundLockEnabled_ = enabled;
+
+    if (liveCleanupEnabled_) {
+        core::processing::CleanupParams liveParams;
+        liveParams.enable_voxel_downsample = true;
+        liveParams.voxel_leaf_size_m = 0.025f;
+        liveParams.enable_ror = true;
+        liveParams.ror_radius_m = 0.08;
+        liveParams.ror_min_neighbors = 3;
+        liveParams.enable_sor = true;
+        liveParams.sor_std_mul = 2.0;
+        liveParams.enable_ground_alignment = liveGroundLockEnabled_;
+        liveParams.align_ground_to_z_zero = true;
+
+        for (auto& s : activeSensors_) {
+            if (!s.raw_map_points.empty()) {
+                auto st = core::processing::PointCloudProcessor::cleanRealtimeFast(
+                    s.raw_map_points, s.map_points, liveParams);
+                liveCleanupTimeMs_ = st.computation_time_ms;
+                if (s.map_points.empty()) s.map_points = s.raw_map_points;
+                s.point_count = s.map_points.size();
+                if (s.id == activeDisplaySensor_.toStdString()) {
+                    mapPoints_ = s.map_points;
+                    pointsCaptured_ = mapPoints_.size();
+                    emit pointsCapturedChanged();
+                    emit mapDataUpdated();
+                }
+            }
+        }
+    }
+    emit cleanupStateChanged();
+}
+
+bool QmlBridge::runPointCloudCleanup(bool enableVoxel, double voxelLeafM,
+                                     bool enableSor, int sorMeanK, double sorStdMul,
+                                     bool enableRor, double rorRadiusM, int rorMinNeighbors,
+                                     bool enableGroundAlign, bool removeGroundPlane) {
+    if (mapPoints_.empty() && preCleanupBackupPoints_.empty()) {
+        emit errorOccurred("Cleanup Error", "No active point cloud loaded in viewport to clean.");
+        return false;
+    }
+
+    if (!hasCleanupPreview_ || preCleanupBackupPoints_.empty()) {
+        preCleanupBackupPoints_ = mapPoints_;
+    }
+
+    core::processing::CleanupParams params;
+    params.enable_voxel_downsample = enableVoxel;
+    params.voxel_leaf_size_m = static_cast<float>(std::max(0.002, voxelLeafM));
+    params.enable_sor = enableSor;
+    params.sor_mean_k = std::max(3, sorMeanK);
+    params.sor_std_mul = std::max(0.1, sorStdMul);
+    params.enable_ror = enableRor;
+    params.ror_radius_m = std::max(0.005, rorRadiusM);
+    params.ror_min_neighbors = std::max(1, rorMinNeighbors);
+    params.enable_ground_alignment = enableGroundAlign;
+    params.align_ground_to_z_zero = enableGroundAlign;
+    params.remove_ground_plane = removeGroundPlane;
+
+    std::vector<core::schemas::PointXYZI> cleaned;
+    auto stats = core::processing::PointCloudProcessor::runCleanupPipeline(
+        preCleanupBackupPoints_, cleaned, params);
+
+    if (cleaned.empty()) {
+        emit errorOccurred("Cleanup Warning", "Filter parameters removed all points. Restoring original cloud.");
+        return false;
+    }
+
+    mapPoints_ = std::move(cleaned);
+    hasCleanupPreview_ = true;
+    cleanupInputPoints_ = static_cast<qlonglong>(stats.input_point_count);
+    cleanupOutputPoints_ = static_cast<qlonglong>(stats.output_point_count);
+    cleanupRemovedPoints_ = cleanupInputPoints_ - cleanupOutputPoints_;
+    cleanupGroundTiltDeg_ = stats.ground_plane.found ? stats.ground_plane.tilt_deg : 0.0;
+    pointsCaptured_ = static_cast<qlonglong>(mapPoints_.size());
+    hasMapData_ = true;
+
+    QString groundSummary = stats.ground_plane.found
+        ? QString(" | Ground leveled (%1° tilt)").arg(stats.ground_plane.tilt_deg, 0, 'f', 1)
+        : QString("");
+
+    cleanupStatus_ = QString("Cleaned: %1 -> %2 pts (-%3 outliers)%4 in %5 ms")
+        .arg(cleanupInputPoints_)
+        .arg(cleanupOutputPoints_)
+        .arg(cleanupRemovedPoints_)
+        .arg(groundSummary)
+        .arg(static_cast<int>(std::round(stats.computation_time_ms)));
+
+    emit cleanupStateChanged();
+    emit pointsCapturedChanged();
+    emit mapDataUpdated();
+    emit notification("Point Cloud Cleaned", cleanupStatus_);
+    return true;
+}
+
+void QmlBridge::resetPointCloudCleanup() {
+    if (!hasCleanupPreview_ || preCleanupBackupPoints_.empty()) {
+        return;
+    }
+    mapPoints_ = preCleanupBackupPoints_;
+    preCleanupBackupPoints_.clear();
+    hasCleanupPreview_ = false;
+    cleanupRemovedPoints_ = 0;
+    cleanupOutputPoints_ = static_cast<qlonglong>(mapPoints_.size());
+    pointsCaptured_ = static_cast<qlonglong>(mapPoints_.size());
+    cleanupStatus_ = "Restored original uncleaned point cloud.";
+
+    emit cleanupStateChanged();
+    emit pointsCapturedChanged();
+    emit mapDataUpdated();
+    emit notification("Cleanup Reset", cleanupStatus_);
+}
+
+bool QmlBridge::commitCleanedPointCloud() {
+    if (mapPoints_.empty()) {
+        emit errorOccurred("Commit Error", "No active point cloud to commit.");
+        return false;
+    }
+
+    // Update active sensor runtime buffer
+    std::string activeId = activeDisplaySensor_.toStdString();
+    for (auto& s : activeSensors_) {
+        if (s.id == activeId) {
+            s.map_points = mapPoints_;
+            s.point_count = mapPoints_.size();
+            break;
+        }
+    }
+    if (activeId == "AIRY") {
+        airyMapPoints_ = mapPoints_;
+        airyPointsCaptured_ = mapPoints_.size();
+    } else if (activeId == "GEMINI") {
+        geminiMapPoints_ = mapPoints_;
+        geminiPointsCaptured_ = mapPoints_.size();
+    } else if (activeId == "VITURE") {
+        vitureMapPoints_ = mapPoints_;
+        viturePointsCaptured_ = mapPoints_.size();
+    } else if (activeId == "CAMERA") {
+        cameraMapPoints_ = mapPoints_;
+        cameraPointsCaptured_ = mapPoints_.size();
+    } else if (activeId == "FUSED") {
+        fusedMapPoints_ = mapPoints_;
+    }
+
+    // Persist to disk if a project is open
+    if (storage_ && !projectId_.isEmpty()) {
+        fs::path proj_dir = fs::path(storage_->getRootDirectory()) / "projects" / projectId_.toStdString();
+        if (!currentSessionId_.isEmpty()) {
+            fs::path sess_dir = proj_dir / "sessions" / currentSessionId_.toStdString();
+            fs::create_directories(sess_dir);
+            if (!preCleanupBackupPoints_.empty() && !fs::exists(sess_dir / "map_raw_backup.pcd")) {
+                saveMapPcd((sess_dir / "map_raw_backup.pcd").string(), preCleanupBackupPoints_);
+            }
+            saveMapPcd((sess_dir / "map.pcd").string(), mapPoints_);
+        }
+        saveMapPcd((proj_dir / "map.pcd").string(), mapPoints_);
+    }
+
+    preCleanupBackupPoints_.clear();
+    hasCleanupPreview_ = false;
+    cleanupStatus_ = QString("Committed cleaned map (%1 points) to project.").arg(mapPoints_.size());
+
+    emit cleanupStateChanged();
+    emit activeSensorsChanged();
+    emit notification("Cleaned Cloud Saved", cleanupStatus_);
+    return true;
+}
+
+QString QmlBridge::exportActivePointCloud(const QString& formatStr,
+                                          const QString& customOutputPath,
+                                          double meshGridResM) {
+    if (mapPoints_.empty()) {
+        emit errorOccurred("Export Error", "No active point cloud available to export.");
+        return "";
+    }
+
+    auto fmt = core::processing::PointCloudProcessor::parseExportFormat(formatStr.toStdString());
+    std::string ext = core::processing::PointCloudProcessor::exportFormatExtension(fmt);
+
+    fs::path out_path;
+    if (!customOutputPath.trimmed().isEmpty()) {
+        out_path = customOutputPath.trimmed().toStdString();
+    } else {
+        fs::path base_dir = storage_ ? fs::path(storage_->getRootDirectory()) : fs::current_path();
+        std::string pid = projectId_.isEmpty() ? "workspace" : projectId_.toStdString();
+        fs::path export_dir = base_dir / "projects" / pid / "exports";
+        fs::create_directories(export_dir);
+
+        auto now = std::chrono::system_clock::now().time_since_epoch();
+        uint64_t ts_sec = std::chrono::duration_cast<std::chrono::seconds>(now).count();
+        std::string sensor_tag = activeDisplaySensor_.isEmpty() ? "map" : activeDisplaySensor_.toLower().toStdString();
+        out_path = export_dir / (pid + "_" + sensor_tag + "_" + std::to_string(ts_sec) + ext);
+    }
+
+    auto res = core::processing::PointCloudProcessor::exportPointCloud(
+        mapPoints_, out_path.string(), fmt, static_cast<float>(std::max(0.01, meshGridResM)));
+
+    if (!res.success) {
+        exportStatus_ = "Export failed: " + QString::fromStdString(res.error_message);
+        emit exportStateChanged();
+        emit errorOccurred("Export Failed", exportStatus_);
+        return "";
+    }
+
+    lastExportPath_ = QString::fromStdString(res.file_path);
+    if (fmt == core::processing::ExportFormat::OBJ_MESH) {
+        exportStatus_ = QString("Exported %1 (%2 vertices, %3 triangles) -> %4")
+            .arg(QString::fromStdString(res.format_name))
+            .arg(res.exported_points)
+            .arg(res.exported_triangles)
+            .arg(lastExportPath_);
+    } else {
+        exportStatus_ = QString("Exported %1 (%2 points, %3 KB) -> %4")
+            .arg(QString::fromStdString(res.format_name))
+            .arg(res.exported_points)
+            .arg(res.file_size_bytes / 1024)
+            .arg(lastExportPath_);
+    }
+
+    emit exportStateChanged();
+    emit notification("Export Complete", exportStatus_);
+    return lastExportPath_;
+}
+
+// =============================================================================
+// Milestones 7 & 8: Rigid Extrinsic Calibration & Multi-Sensor Spatial Fusion
+// =============================================================================
+
+bool QmlBridge::calibrateActiveScannerExtrinsics() {
+    // Collect all active sensors that have captured or loaded point clouds
+    struct SensorCloudEntry {
+        std::string role;
+        std::string instance_id;
+        const std::vector<core::schemas::PointXYZI>* cloud = nullptr;
+        const std::vector<core::schemas::Pose3D>* traj = nullptr;
+    };
+    std::vector<SensorCloudEntry> entries;
+
+    for (const auto& s : activeSensors_) {
+        if (!s.map_points.empty() && s.id != "MERGED" && s.id != "FUSED") {
+            entries.push_back({s.id, s.instance_id, &s.map_points, &s.trajectory});
+        }
+    }
+
+    if (entries.size() < 2) {
+        emit errorOccurred("Extrinsic Calibration Error",
+                           "At least 2 sensors with spatial point clouds are required in the current project/session to calibrate rigid extrinsics.");
+        return false;
+    }
+
+    // Load or initialize the active ScannerConfig
+    core::schemas::ScannerConfig cfg;
+    bool loaded_cfg = false;
+    if (storage_ && !selectedScannerId_.isEmpty()) {
+        loaded_cfg = storage_->loadScannerConfig(selectedScannerId_.toStdString(), cfg);
+    }
+    if (!loaded_cfg && storage_) {
+        for (const auto& cid : storage_->listScannerConfigs()) {
+            core::schemas::ScannerConfig candidate;
+            if (storage_->loadScannerConfig(cid, candidate) && candidate.sensor_instances().size() >= entries.size()) {
+                cfg = candidate;
+                loaded_cfg = true;
+                break;
+            }
+        }
+    }
+    if (!loaded_cfg) {
+        std::vector<std::string> insts;
+        for (const auto& e : entries) insts.push_back(e.instance_id);
+        cfg = core::schemas::ScannerConfig("cfg_calibrated_multisensor", "Calibrated Multi-Sensor Rig", "local_node");
+        cfg.set_sensor_instances(insts);
+    }
+
+    const auto& ref = entries[0];
+    QStringList pairSummaries;
+    double best_rmse_mm = 0.0;
+    double best_overlap_pct = 0.0;
+    double best_conf = 0.0;
+    bool any_converged = false;
+
+    for (size_t i = 1; i < entries.size(); ++i) {
+        const auto& sec = entries[i];
+        auto cal_res = core::fusion::ExtrinsicCalibrator::calibrateSensorPair(
+            ref.instance_id,
+            sec.instance_id,
+            *ref.cloud,
+            *sec.cloud,
+            *ref.traj,
+            *sec.traj);
+
+        if (cal_res.converged) {
+            any_converged = true;
+            core::fusion::ExtrinsicCalibrator::persistCalibrationToConfig(
+                cfg, cal_res, currentSessionId_.toStdString(), storage_.get());
+            // Also store under role names ("AIRY<-GEMINI", "GEMINI") for role-based lookup
+            cfg.set_relative_transform(ref.role + "<-" + sec.role, cal_res.transform);
+            cfg.set_relative_transform(sec.role, cal_res.transform);
+            if (storage_) {
+                storage_->saveScannerConfig(cfg);
+            }
+
+            best_rmse_mm = cal_res.inlier_rmse_m * 1000.0;
+            best_overlap_pct = cal_res.overlap_ratio * 100.0;
+            best_conf = cal_res.confidence;
+
+            pairSummaries.append(QString("%1 <- %2: dT=[%3, %4, %5]m, RPY=[%6°, %7°, %8°], RMSE=%9mm, Overlap=%10%")
+                .arg(QString::fromStdString(ref.role))
+                .arg(QString::fromStdString(sec.role))
+                .arg(cal_res.transform.translation.x, 0, 'f', 3)
+                .arg(cal_res.transform.translation.y, 0, 'f', 3)
+                .arg(cal_res.transform.translation.z, 0, 'f', 3)
+                .arg(cal_res.roll_deg, 0, 'f', 1)
+                .arg(cal_res.pitch_deg, 0, 'f', 1)
+                .arg(cal_res.yaw_deg, 0, 'f', 1)
+                .arg(best_rmse_mm, 0, 'f', 1)
+                .arg(best_overlap_pct, 0, 'f', 1));
+        }
+    }
+
+    if (!any_converged) {
+        extrinsicCalibrationStatus_ = "FAILED";
+        emit fusionStateChanged();
+        emit errorOccurred("Extrinsic Calibration Failed", "Could not converge on a rigid SE(3) transform between active sensor clouds.");
+        return false;
+    }
+
+    extrinsicCalibrationStatus_ = QString::fromStdString(core::schemas::to_string(cfg.extrinsic_status()));
+    extrinsicRmseMm_ = best_rmse_mm;
+    extrinsicOverlapPercent_ = best_overlap_pct;
+    extrinsicConfidence_ = best_conf;
+    extrinsicTransformSummary_ = pairSummaries.join("\n");
+
+    refreshData();
+    emit fusionStateChanged();
+    emit notification("Extrinsics Calibrated",
+                      QString("Persisted %1 extrinsic calibration to '%2':\n%3")
+                          .arg(extrinsicCalibrationStatus_)
+                          .arg(QString::fromStdString(cfg.name()))
+                          .arg(extrinsicTransformSummary_));
+    return true;
+}
+
+bool QmlBridge::fuseActiveMultiSensorMaps(double voxelLeafM,
+                                          bool transferOpticalRgb,
+                                          bool diagnosticRoleColors) {
+    std::vector<core::fusion::SensorFusionInput> inputs;
+    for (const auto& s : activeSensors_) {
+        if (s.id == "MERGED" || s.id == "FUSED") continue;
+        core::fusion::SensorFusionInput in;
+        in.sensor_id = s.instance_id.empty() ? s.id : s.instance_id;
+        in.sensor_role = s.id;
+        in.cloud = s.map_points;
+        in.trajectory = s.trajectory;
+        in.is_optical_rgb_source = (s.id == "GEMINI" || s.id == "CAMERA" || s.id == "VITURE");
+        in.geometry_weight = (s.id == "AIRY") ? 2.0f : 1.0f;
+        in.is_metric_scale_verified = (s.scale_status == "METRIC_VERIFIED");
+        in.slam_rate_hz = s.slam_rate;
+        if (s.health_override_active) {
+            in.is_tracking_healthy = s.health_override_healthy;
+            in.is_degraded = s.health_override_degraded;
+        } else {
+            in.is_tracking_healthy = (s.tracking_status != "LOST" && s.tracking_status != "OFFLINE" && s.device_status != "DISCONNECTED");
+            in.is_degraded = (s.tracking_status == "DEGRADED" || s.tracking_status == "RELOCALIZING");
+        }
+        inputs.push_back(std::move(in));
+    }
+
+    bool any_non_empty = false;
+    for (const auto& in : inputs) {
+        if (!in.cloud.empty()) {
+            any_non_empty = true;
+            break;
+        }
+    }
+    if (inputs.empty() || !any_non_empty) {
+        emit errorOccurred("Multi-Sensor Fusion Error", "No sensor point clouds available to fuse.");
+        return false;
+    }
+
+    core::schemas::ScannerConfig cfg;
+    bool loaded_cfg = false;
+    if (storage_ && !selectedScannerId_.isEmpty()) {
+        loaded_cfg = storage_->loadScannerConfig(selectedScannerId_.toStdString(), cfg);
+    }
+    if (!loaded_cfg && storage_) {
+        for (const auto& cid : storage_->listScannerConfigs()) {
+            core::schemas::ScannerConfig candidate;
+            if (storage_->loadScannerConfig(cid, candidate) && candidate.sensor_instances().size() >= inputs.size()) {
+                cfg = candidate;
+                loaded_cfg = true;
+                break;
+            }
+        }
+    }
+
+    core::fusion::MultiSensorFusionParams params;
+    params.voxel_leaf_size_m = static_cast<float>(voxelLeafM);
+    params.transfer_optical_rgb_to_lidar = transferOpticalRgb;
+    params.color_by_sensor_role = diagnosticRoleColors;
+    params.auto_calibrate_missing = true;
+    params.real_time_mode = false;
+
+    core::fusion::MultiSensorFusionEngine engine;
+    auto res = engine.fuseSensors(inputs, cfg, params);
+    if (!res.success || res.fused_cloud.empty()) {
+        fusionStatus_ = "Fusion failed: " + QString::fromStdString(res.status_message);
+        emit fusionStateChanged();
+        emit errorOccurred("Fusion Error", fusionStatus_);
+        return false;
+    }
+
+    if (storage_ && !cfg.config_id().empty() && !res.calibration_results.empty()) {
+        storage_->saveScannerConfig(cfg);
+        extrinsicCalibrationStatus_ = QString::fromStdString(core::schemas::to_string(cfg.extrinsic_status()));
+        for (const auto& kv : res.calibration_results) {
+            extrinsicRmseMm_ = kv.second.inlier_rmse_m * 1000.0;
+            extrinsicOverlapPercent_ = kv.second.overlap_ratio * 100.0;
+            extrinsicConfidence_ = kv.second.confidence;
+        }
+    }
+
+    fusedMapPoints_ = std::move(res.fused_cloud);
+    fusedTrajectory_ = std::move(res.fused_trajectory);
+    fusedColorizedPoints_ = static_cast<qlonglong>(res.colorized_lidar_points);
+    isFusionActive_ = true;
+    fusionStatus_ = QString::fromStdString(res.status_message);
+
+    activeAnchorSensor_ = QString::fromStdString(res.anchor_sensor_role);
+    activeAnchorScore_ = res.anchor_accuracy_score;
+    isAnchorFailoverActive_ = res.anchor_failover_active;
+    activeAnchorRationale_ = QString::fromStdString(res.anchor_rationale);
+
+    for (auto& s : activeSensors_) {
+        std::string sid = s.instance_id.empty() ? s.id : s.instance_id;
+        auto it = res.sensor_accuracy_scores.find(sid);
+        if (it != res.sensor_accuracy_scores.end()) {
+            s.accuracy_score = it->second;
+        }
+        s.is_anchor = (s.id == res.anchor_sensor_role || sid == res.anchor_sensor_id);
+        if (s.is_anchor) {
+            activeAnchorName_ = QString::fromStdString(s.short_name);
+        }
+    }
+
+    activeDisplaySensor_ = "FUSED";
+    mapPoints_ = fusedMapPoints_;
+    trajectory_ = fusedTrajectory_;
+    pointsCaptured_ = static_cast<qlonglong>(fusedMapPoints_.size());
+    hasMapData_ = true;
+
+    invalidateDisplayPointsCache();
+    emit activeSensorsChanged();
+    emit activeDisplaySensorChanged();
+    emit fusionStateChanged();
+    emit pointsCapturedChanged();
+    emit mapDataUpdated();
+    emit trajectoryChanged();
+    emit notification("Multi-Sensor Fusion Complete", fusionStatus_);
+    return true;
+}
+
+void QmlBridge::updateLiveMultiSensorFusion(bool realTimeMode) {
+    if (activeSensors_.size() <= 1) {
+        if (!activeSensors_.empty()) {
+            auto& s = activeSensors_.front();
+            s.is_anchor = true;
+            s.accuracy_score = core::fusion::MultiSensorFusionEngine::computeNominalAccuracyScore(
+                s.id, s.scale_status == "METRIC_VERIFIED");
+            activeAnchorSensor_ = QString::fromStdString(s.id);
+            activeAnchorName_ = QString::fromStdString(s.short_name);
+            activeAnchorScore_ = s.accuracy_score;
+            isAnchorFailoverActive_ = false;
+            activeAnchorRationale_ = "Primary single-sensor anchor (" + activeAnchorName_ + ").";
+        }
+        return;
+    }
+
+    std::vector<core::fusion::SensorFusionInput> inputs;
+    inputs.reserve(activeSensors_.size());
+    for (const auto& s : activeSensors_) {
+        if (s.id == "MERGED" || s.id == "FUSED") continue;
+        core::fusion::SensorFusionInput in;
+        in.sensor_id = s.instance_id.empty() ? s.id : s.instance_id;
+        in.sensor_role = s.id;
+        in.cloud = s.map_points;
+        in.trajectory = s.trajectory;
+        in.is_optical_rgb_source = (s.id == "GEMINI" || s.id == "CAMERA" || s.id == "VITURE");
+        in.geometry_weight = (s.id == "AIRY") ? 2.0f : 1.0f;
+        in.is_metric_scale_verified = (s.scale_status == "METRIC_VERIFIED");
+        in.slam_rate_hz = s.slam_rate;
+        if (s.health_override_active) {
+            in.is_tracking_healthy = s.health_override_healthy;
+            in.is_degraded = s.health_override_degraded;
+        } else {
+            in.is_tracking_healthy = (s.tracking_status != "LOST" && s.tracking_status != "OFFLINE" && s.device_status != "DISCONNECTED");
+            in.is_degraded = (s.tracking_status == "DEGRADED" || s.tracking_status == "RELOCALIZING");
+        }
+        inputs.push_back(std::move(in));
+    }
+
+    if (inputs.empty()) return;
+
+    core::schemas::ScannerConfig cfg;
+    bool loaded_cfg = false;
+    if (storage_ && !selectedScannerId_.isEmpty()) {
+        loaded_cfg = storage_->loadScannerConfig(selectedScannerId_.toStdString(), cfg);
+    }
+    if (!loaded_cfg && storage_) {
+        for (const auto& cid : storage_->listScannerConfigs()) {
+            core::schemas::ScannerConfig candidate;
+            if (storage_->loadScannerConfig(cid, candidate) && candidate.sensor_instances().size() >= inputs.size()) {
+                cfg = candidate;
+                loaded_cfg = true;
+                break;
+            }
+        }
+    }
+
+    core::fusion::MultiSensorFusionParams params;
+    params.voxel_leaf_size_m = 0.025f;
+    params.transfer_optical_rgb_to_lidar = true;
+    params.color_by_sensor_role = false;
+    params.auto_calibrate_missing = !realTimeMode;
+    params.real_time_mode = realTimeMode;
+
+    core::fusion::MultiSensorFusionEngine engine;
+    auto res = engine.fuseSensors(inputs, cfg, params);
+
+    activeAnchorSensor_ = QString::fromStdString(res.anchor_sensor_role);
+    activeAnchorScore_ = res.anchor_accuracy_score;
+    isAnchorFailoverActive_ = res.anchor_failover_active;
+    activeAnchorRationale_ = QString::fromStdString(res.anchor_rationale);
+
+    for (auto& s : activeSensors_) {
+        std::string sid = s.instance_id.empty() ? s.id : s.instance_id;
+        auto it = res.sensor_accuracy_scores.find(sid);
+        if (it != res.sensor_accuracy_scores.end()) {
+            s.accuracy_score = it->second;
+        }
+        s.is_anchor = (s.id == res.anchor_sensor_role || sid == res.anchor_sensor_id);
+        if (s.is_anchor) {
+            activeAnchorName_ = QString::fromStdString(s.short_name);
+        }
+    }
+
+    if (res.success && !res.fused_cloud.empty()) {
+        fusedMapPoints_ = std::move(res.fused_cloud);
+        fusedTrajectory_ = std::move(res.fused_trajectory);
+        fusedColorizedPoints_ = static_cast<qlonglong>(res.colorized_lidar_points);
+        isFusionActive_ = true;
+        fusionStatus_ = QString::fromStdString(res.status_message);
+
+        if (activeDisplaySensor_ == "FUSED") {
+            mapPoints_ = fusedMapPoints_;
+            trajectory_ = fusedTrajectory_;
+            qlonglong totalSensorPts = 0;
+            for (const auto& s : activeSensors_) {
+                totalSensorPts += s.point_count;
+            }
+            pointsCaptured_ = (totalSensorPts > 0) ? totalSensorPts : static_cast<qlonglong>(fusedMapPoints_.size());
+            hasMapData_ = true;
+            invalidateDisplayPointsCache();
+        }
+    } else {
+        isFusionActive_ = true;
+        fusionStatus_ = activeAnchorRationale_;
+    }
+
+    emit activeSensorsChanged();
+    emit fusionStateChanged();
+}
+
+void QmlBridge::setSensorHealthOverride(const QString& sensorId, bool healthy, bool degraded) {
+    QString target = sensorId.trimmed().toUpper();
+    bool matched = false;
+    for (auto& s : activeSensors_) {
+        if (QString::fromStdString(s.id).toUpper() == target ||
+            QString::fromStdString(s.instance_id).toUpper() == target) {
+            s.health_override_active = true;
+            s.health_override_healthy = healthy;
+            s.health_override_degraded = degraded;
+            if (!healthy) {
+                s.tracking_status = "LOST";
+            } else if (degraded) {
+                s.tracking_status = "DEGRADED";
+            } else {
+                s.tracking_status = isCapturing_ ? "TRACKING" : "IDLE";
+            }
+            matched = true;
+        }
+    }
+    if (matched) {
+        updateLiveMultiSensorFusion(true);
+        emit activeSensorsChanged();
+        emit fusionStateChanged();
+        emit mapDataUpdated();
+        emit trajectoryChanged();
+    }
+}
+
+void QmlBridge::clearSensorHealthOverrides() {
+    for (auto& s : activeSensors_) {
+        s.health_override_active = false;
+        s.health_override_healthy = true;
+        s.health_override_degraded = false;
+        if (s.tracking_status == "LOST" || s.tracking_status == "DEGRADED") {
+            s.tracking_status = isCapturing_ ? "TRACKING" : "IDLE";
+        }
+    }
+    updateLiveMultiSensorFusion(true);
+    emit activeSensorsChanged();
+    emit fusionStateChanged();
+    emit mapDataUpdated();
+    emit trajectoryChanged();
+}
+
+bool QmlBridge::saveFusedMapToProject() {
+    if (fusedMapPoints_.empty()) {
+        emit errorOccurred("Save Fused Map Error", "No fused multi-sensor map available to save.");
+        return false;
+    }
+    if (!storage_ || projectId_.isEmpty()) {
+        emit errorOccurred("Save Fused Map Error", "No active project open.");
+        return false;
+    }
+
+    auto now = std::chrono::system_clock::now().time_since_epoch();
+    uint64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+    std::string pid = projectId_.toStdString();
+    std::string sess_id = currentSessionId_.isEmpty() ? ("session_" + std::to_string(now_ms)) : currentSessionId_.toStdString();
+
+    fs::path proj_dir = fs::path(storage_->getRootDirectory()) / "projects" / pid;
+    fs::path sess_dir = proj_dir / "sessions" / sess_id;
+    fs::create_directories(sess_dir);
+
+    saveMapPcd((sess_dir / "map.pcd").string(), fusedMapPoints_);
+    saveMapPcd((proj_dir / "map.pcd").string(), fusedMapPoints_);
+
+    std::string cap_id = "cap_" + sess_id + "_merged";
+    fs::path cap_dir = sess_dir / "captures" / cap_id;
+    fs::create_directories(cap_dir);
+    saveMapPcd((cap_dir / "map.pcd").string(), fusedMapPoints_);
+
+    core::schemas::Capture cap;
+    cap.set_capture_id(cap_id);
+    cap.set_session_id(sess_id);
+    cap.set_sensor_instance_id("merged_multisensor_01");
+    cap.set_observation_count(fusedMapPoints_.size());
+    cap.set_start_timestamp_ns(now_ms * 1000000ULL);
+    cap.set_end_timestamp_ns(now_ms * 1000000ULL);
+    cap.set_map_path((cap_dir / "map.pcd").string());
+    cap.set_status("COMPLETED");
+    storage_->saveCapture(cap);
+
+    std::ofstream c_out(cap_dir / "capture.json");
+    if (c_out.is_open()) {
+        c_out << cap.to_json().dump(2);
+    }
+
+    fusionStatus_ = QString("Saved fused map (%1 points) to project '%2'.").arg(fusedMapPoints_.size()).arg(projectName_);
+    emit fusionStateChanged();
+    emit notification("Fused Map Saved", fusionStatus_);
+    return true;
 }
 
 } // namespace av::gui

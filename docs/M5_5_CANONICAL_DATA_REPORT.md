@@ -65,37 +65,39 @@ To eliminate per-sensor heuristics in the UI layer, **no sensor-specific rotatio
 
 Each sensor driver and SLAM backend applies an explicit normalization transform prior to publishing spatial maps or poses to the AV Scan IPC layer:
 
-### 3.1 RoboSense Airy LiDAR (`RS-Airy`)
+### 3.1 RoboSense Airy LiDAR (`RS-Airy` — FROZEN Ground-Truth Reference)
 * **Pipeline:** 905nm LiDAR + Onboard 6-DoF IMU $\rightarrow$ FAST-LIVO2 (LIO mode) $\rightarrow$ AV Scan IPC.
 * **Native Frame:** ROS FLU (Forward-Left-Up) frame.
-* **Gravity Normalization:** FAST-LIVO2 configuration [`config/robosense.yaml`](file:///home/scanar/scanarMini/src/FAST-LIVO2/config/robosense.yaml) configured with:
-  ```yaml
-  gravity_align_en: true
-  ```
-  This aligns the initial map vertical axis with true gravity measured by the IMU accelerometer.
+* **Gravity Normalization:** FAST-LIVO2 configuration [`config/robosense.yaml`](file:///home/scanar/scanarMini/src/FAST-LIVO2/config/robosense.yaml) configured with `gravity_align_en: true`, aligning the initial map vertical axis with true gravity ($n_{\text{floor}} = [0, 0, +1]$).
 * **Transform Matrix:**
-  $$T_{\text{AV\_from\_Airy}} = \begin{bmatrix} 1 & 0 & 0 & 0 \\ 0 & 1 & 0 & 0 \\ 0 & 0 & 1 & 0 \\ 0 & 0 & 0 & 1 \end{bmatrix} = \mathbf{I}_{4\times 4}$$
+  $$T_{\text{AV\_from\_Airy}} = \mathbf{I}_{4\times 4} \quad (\text{FROZEN Ground Truth})$$
 * **Color Status:** Geometric LiDAR only; `has_color = false`.
 
 ### 3.2 Orbbec Gemini 336L (`Gemini 336L`)
-* **Pipeline:** Active IR Stereo Depth + 1080p RGB + Onboard 6-DoF IMU (200 Hz) $\rightarrow$ RTAB-Map RGB-D SLAM $\rightarrow$ AV Scan IPC.
-* **Native Frame:** ROS robot base frame (`camera_link`), where $+X$ is forward, $+Y$ is left, $+Z$ is up.
-* **Transform Matrix:**
-  $$T_{\text{AV\_from\_Gemini}} = \begin{bmatrix} 1 & 0 & 0 & 0 \\ 0 & 1 & 0 & 0 \\ 0 & 0 & 1 & 0 \\ 0 & 0 & 0 & 1 \end{bmatrix} = \mathbf{I}_{4\times 4}$$
+* **Pipeline:** Active IR Stereo Depth + 1080p RGB + Onboard 6-DoF IMU (200 Hz) $\rightarrow$ RTAB-Map RGB-D SLAM (`unite_imu_method:=copy`, `--Optimizer/GravitySigma 0.3`) $\rightarrow$ AV Scan IPC.
+* **Same-Room Rationalization vs. Airy (`MultiDeviceTest`):**
+  * Without IMU gravity constraint or mounting pitch/yaw compensation, raw `camera_link` captures exhibited a pitched floor plane ($n_1 = [-0.145, -0.761, +0.633]$, $50.8^\circ$ tilt) and $+79.5^\circ$ heading offset relative to Airy.
+  * Multi-stage plane-normal + 3D ICP registration against `MultiDeviceTest:airy` (`cap_1789676064983_airy`) yielded **99.8% inliers** ($<0.35\text{ m}$) and **48.4 mm GICP RMSE** with Euler angles $\text{Roll} = -2.7^\circ, \text{Pitch} = -51.0^\circ, \text{Yaw} = +79.5^\circ$:
+  $$R_{\text{canonical, Gemini}} = R_z(+79.5^\circ)\,R_y(-51.0^\circ)\,R_x(-2.7^\circ) = \begin{bmatrix} 0.114672 & -0.985415 & -0.125729 \\ 0.618771 & 0.169567 & -0.767052 \\ 0.777156 & -0.011068 & 0.629210 \end{bmatrix}$$
+* **Persistence:** Saved to [`profiles/validated/gemini_336l_profile.json`](file:///home/scanar/av_scan/profiles/validated/gemini_336l_profile.json) and [`core/drivers/gemini/canonical_transform.json`](file:///home/scanar/av_scan/core/drivers/gemini/canonical_transform.json), where `av_gemini_daemon.py` rotates both the 3D point cloud and full 6-DoF odometry orientation quaternion.
 * **Color Status:** True RGB unpacked directly from RTAB-Map `/rtabmap/cloud_map` point cloud; `has_color = true`.
 
 ### 3.3 VITURE Luma Ultra XR Glasses (`Luma Ultra`)
 * **Pipeline:** Dual 640×480 Grayscale Tracking Cameras + 1000 Hz IMU + 1080p RGB Camera $\rightarrow$ Carina XR VIO Engine $\rightarrow$ AV Scan IPC.
-* **Native Frame:** OpenGL Graphic convention ($+X_{\text{gl}}$ Right, $+Y_{\text{gl}}$ Up, $-Z_{\text{gl}}$ Forward).
-* **Transform Matrix:**
-  $$T_{\text{AV\_from\_VITURE}} = \begin{bmatrix} 0 & 0 & -1 & 0 \\ -1 & 0 & 0 & 0 \\ 0 & 1 & 0 & 0 \\ 0 & 0 & 0 & 1 \end{bmatrix}$$
-  $$\begin{aligned}
-  X_{\text{AV}} &= -Z_{\text{gl}} \quad (\text{Forward}) \\
-  Y_{\text{AV}} &= -X_{\text{gl}} \quad (\text{Left}) \\
-  Z_{\text{AV}} &= +Y_{\text{gl}} \quad (\text{Up}) \\
-  \psi_{\text{AV}} &= \text{atan2}(R_{13}, R_{33}) \quad (\text{Heading})
-  \end{aligned}$$
+* **Base Optical-to-FLU Matrix ($T_{\text{base}}$):**
+  $$T_{\text{base}} = \begin{bmatrix} 0 & 0 & -1 & 0 \\ -1 & 0 & 0 & 0 \\ 0 & 1 & 0 & 0 \\ 0 & 0 & 0 & 1 \end{bmatrix}$$
+* **Same-Room Rationalization vs. Airy (`LumaUltraTest8`):**
+  * Aligning the room floor and walls to `MultiDeviceTest:airy` yields $\text{Roll} = +149.4^\circ, \text{Pitch} = -19.3^\circ, \text{Yaw} = -148.5^\circ$ (**99.6% inliers**, **0.139 m RMSE**):
+  $$R_{\text{user, VITURE}} = \begin{bmatrix} -0.805402 & -0.409003 & 0.428993 \\ -0.493026 & 0.858894 & -0.138659 \\ -0.328990 & -0.308161 & -0.892638 \end{bmatrix}, \quad R_{\text{total}} = R_{\text{user, VITURE}} \cdot T_{\text{base}, 3\times 3}$$
+* **Persistence:** Saved to [`profiles/validated/viture_ultra_profile.json`](file:///home/scanar/av_scan/profiles/validated/viture_ultra_profile.json) and [`core/drivers/viture/canonical_transform.json`](file:///home/scanar/av_scan/core/drivers/viture/canonical_transform.json).
 * **Color Status:** True RGB sampled projectively from onboard 1080p UVC color camera (`/dev/video0`); `has_color = true`.
+
+### 3.4 Monocular RGB Cameras (`SenseCAP Watcher` via LingBot & `ELP USB Camera` via ABot)
+* **Pipeline:** UVC RGB Stream $\rightarrow$ LingBot-Depth / ABot-M0 Monocular Metric Depth + Visual Odometry $\rightarrow$ AV Scan IPC.
+* **Base Optical-to-FLU Matrix ($M_{\text{av\_cam\_base}}$):** Maps $+Z_{\text{opt}} \rightarrow +X_{\text{AV}}$, $+X_{\text{opt}} \rightarrow -Y_{\text{AV}}$, $+Y_{\text{opt}} \rightarrow -Z_{\text{AV}}$.
+* **Same-Room Rationalization vs. Airy:**
+  * **Seeed SenseCAP Watcher (`WatcherTest:camera`):** $\text{Roll} = +45.5^\circ, \text{Pitch} = -37.5^\circ, \text{Yaw} = -143.0^\circ$ (**99.6% inliers**, **0.135 m RMSE**), persisted to [`profiles/experimental/seeed_sensecap_watcher_56D5018737.json`](file:///home/scanar/av_scan/profiles/experimental/seeed_sensecap_watcher_56D5018737.json).
+  * **ELP USB Camera (`abot_elp_test4:camera`):** $\text{Roll} = -28.0^\circ, \text{Pitch} = -37.9^\circ, \text{Yaw} = +92.7^\circ$ (**98.2% inliers**, **0.169 m RMSE**), persisted to [`profiles/experimental/camera_32e4_4802_2023081002.json`](file:///home/scanar/av_scan/profiles/experimental/camera_32e4_4802_2023081002.json) and [`core/drivers/uvc/canonical_transform.json`](file:///home/scanar/av_scan/core/drivers/uvc/canonical_transform.json) (loaded by both `LingBotStreamingBackend` and `ABotStreamingBackend`).
 
 ---
 

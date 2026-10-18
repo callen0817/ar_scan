@@ -123,6 +123,8 @@ class VitureDaemon:
         self.voxel_size = 0.03  # 3 cm spatial voxel resolution
         self.global_voxels = {}
         self.new_points_buffer = []
+        self.canonical_R = None
+        self._load_canonical_transform()
 
         # 2D Grid Map
         self.grid_map = {
@@ -313,11 +315,44 @@ class VitureDaemon:
         self.rgb_acq_timestamps = deque()
         self.rgb_acquisition_rate_hz = 0.0
 
+    def _load_canonical_transform(self):
+        self.canonical_R = None
+        tf_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "canonical_transform.json")
+        if os.path.exists(tf_path):
+            try:
+                with open(tf_path, "r") as f:
+                    data = json.load(f)
+                    if "matrix_3x3" in data:
+                        self.canonical_R = data["matrix_3x3"]
+                        print(f"[VitureDaemon] Loaded canonical transform from {tf_path}")
+                        return
+            except Exception as e:
+                print(f"[VitureDaemon] Error reading {tf_path}: {e}")
+
+        prof_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../profiles/validated/viture_ultra_profile.json")
+        if os.path.exists(prof_path):
+            try:
+                with open(prof_path, "r") as f:
+                    data = json.load(f)
+                    c_tf = data.get("canonical_av_transform", {})
+                    if "matrix_3x3" in c_tf:
+                        self.canonical_R = c_tf["matrix_3x3"]
+                        print(f"[VitureDaemon] Loaded canonical transform from {prof_path}")
+            except Exception as e:
+                print(f"[VitureDaemon] Error reading {prof_path}: {e}")
+
     def _on_lingbot_points(self, new_pts):
         """Callback from LingBot backend delivering genuine XYZRGB points."""
         with self.lock:
-            self.new_points_buffer.extend(new_pts)
+            R = self.canonical_R
             for pt in new_pts:
+                if R:
+                    x, y, z = float(pt[0]), float(pt[1]), float(pt[2])
+                    rx = R[0][0] * x + R[0][1] * y + R[0][2] * z
+                    ry = R[1][0] * x + R[1][1] * y + R[1][2] * z
+                    rz = R[2][0] * x + R[2][1] * y + R[2][2] * z
+                    pt = (rx, ry, rz, pt[3], pt[4], pt[5], pt[6], pt[7])
+                self.new_points_buffer.append(pt)
                 gx = int(math.floor(pt[0] / self.voxel_size))
                 gy = int(math.floor(pt[1] / self.voxel_size))
                 gz = int(math.floor(pt[2] / self.voxel_size))
@@ -578,6 +613,7 @@ class VitureDaemon:
             if self.is_capturing:
                 return True, "Already capturing"
 
+            self._load_canonical_transform()
             print(f"[VitureDaemon] Starting VITURE Luma Ultra Capture (Backend: {self.backend_mode})...")
             self.global_voxels.clear()
             self.trajectory.clear()
@@ -676,6 +712,11 @@ class VitureDaemon:
                 # 2. Change of basis to Canonical AV World frame
                 R_w_av = self.M_av_gl @ R_gl @ self.M_av_gl.T
                 t_w_av = self.M_av_gl @ t_gl
+
+                if self.canonical_R:
+                    R_user = np.array(self.canonical_R, dtype=np.float64)
+                    R_w_av = R_user @ R_w_av
+                    t_w_av = R_user @ t_w_av
 
                 # 3. Canonical AV position and heading
                 px_av = float(t_w_av[0])

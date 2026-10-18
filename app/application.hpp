@@ -13,6 +13,7 @@ namespace av::app {
 struct AppConfig {
     std::string data_root;
     std::string log_file;
+    std::string screenshot_path;
     bool headless{false};
     bool test_mode{false};
 };

@@ -37,9 +37,15 @@ public:
     using StopCaptureCallback = std::function<void(const std::string& session_id, uint64_t requested_stop_ns)>;
     using StatusCallback = std::function<void(const std::string& node_uuid, const std::string& capture_id, const std::string& status, uint64_t obs_count)>;
     using ConnectionCallback = std::function<void(const std::string& node_uuid, bool connected)>;
+    using CslamPayloadCallback = std::function<void(const std::string& source_node_uuid, const nlohmann::json& payload)>;
 
     CoordinationService();
     ~CoordinationService();
+
+    // Optional local node identity override (useful for multi-instance tests or simulated nodes)
+    void setLocalIdentityOverride(const std::string& node_uuid, const std::string& display_name);
+    std::string getEffectiveNodeUuid() const;
+    std::string getEffectiveDisplayName() const;
 
     // Start TCP coordination server on specified port
     bool start(int listen_port = DEFAULT_COORDINATION_TCP_PORT);
@@ -56,6 +62,8 @@ public:
     void setStopCaptureCallback(StopCaptureCallback cb) { on_stop_capture_ = cb; }
     void setCaptureStatusCallback(StatusCallback cb) { on_capture_status_ = cb; }
     void setConnectionCallback(ConnectionCallback cb) { on_connection_changed_ = cb; }
+    void setCslamSubmapCallback(CslamPayloadCallback cb) { on_cslam_submap_ = cb; }
+    void setCslamAlignmentCallback(CslamPayloadCallback cb) { on_cslam_alignment_ = cb; }
 
     // Session Management (Coordinator)
     bool createSession(const std::string& session_id, const std::string& project_id);
@@ -72,6 +80,11 @@ public:
     bool reportCaptureStatus(const std::string& session_id, const std::string& capture_id, const std::string& status, uint64_t obs_count);
     bool leaveSession();
 
+    // C-SLAM Real-Time Submap & Alignment Streaming
+    bool sendSubmapUpdate(const nlohmann::json& payload);
+    bool broadcastAlignmentUpdate(const nlohmann::json& payload);
+    bool sendDirectMessageToPeer(const std::string& peer_node_uuid, const std::string& msg_type, const nlohmann::json& payload);
+
     // Manual peer connection (for routed/Tailscale non-broadcast environments)
     bool connectToPeer(const std::string& peer_ip, int peer_port);
 
@@ -87,11 +100,15 @@ private:
     int listen_port_{DEFAULT_COORDINATION_TCP_PORT};
     int server_fd_{-1};
 
+    std::string override_node_uuid_;
+    std::string override_display_name_;
+
     std::string active_session_id_;
     std::string active_project_id_;
     std::string coordinator_uuid_;
     std::string coordinator_ip_;
     int coordinator_port_{DEFAULT_COORDINATION_TCP_PORT};
+    int coordinator_sock_{-1};
     schemas::NodeSessionRole session_role_{schemas::NodeSessionRole::UNASSIGNED};
     std::atomic<bool> is_capturing_{false};
     std::mutex session_mutex_;
@@ -99,6 +116,7 @@ private:
     std::unordered_map<std::string, SessionMemberInfo> session_members_;
     std::unordered_map<std::string, int> peer_sockets_; // node_uuid -> socket fd
     std::mutex members_mutex_;
+    std::mutex send_mutex_;
 
     // Sockets to threads mapping
     std::vector<std::thread> client_threads_;
@@ -114,13 +132,15 @@ private:
     StopCaptureCallback on_stop_capture_;
     StatusCallback on_capture_status_;
     ConnectionCallback on_connection_changed_;
+    CslamPayloadCallback on_cslam_submap_;
+    CslamPayloadCallback on_cslam_alignment_;
 
     void serverAcceptWorker();
     void clientConnectionWorker(int socket_fd, std::string peer_ip);
     void heartbeatWorker();
 
     bool sendMessage(int socket_fd, const CoordinationMessage& msg);
-    bool broadcastToMembers(const CoordinationMessage& msg);
+    bool broadcastToMembers(const CoordinationMessage& msg, const std::string& exclude_node_uuid = "");
     void handleIncomingMessage(int socket_fd, const CoordinationMessage& msg, const std::string& peer_ip);
 
     int connectSocket(const std::string& ip, int port);

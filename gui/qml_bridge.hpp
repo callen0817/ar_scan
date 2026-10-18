@@ -26,6 +26,9 @@
 #include "core/multi_node/multi_node_session_orchestrator.hpp"
 #include "core/schemas/registration_result.hpp"
 #include "core/registration/registration_engine.hpp"
+#include "core/processing/point_cloud_processor.hpp"
+#include "core/fusion/extrinsic_calibrator.hpp"
+#include "core/fusion/multi_sensor_fusion_engine.hpp"
 
 namespace av::gui {
 
@@ -53,7 +56,14 @@ struct SensorRuntimeContext {
     double slam_rate{0.0};
     uint64_t point_count{0};
 
+    bool health_override_active{false};
+    bool health_override_healthy{true};
+    bool health_override_degraded{false};
+    double accuracy_score{100.0};
+    bool is_anchor{false};
+
     std::vector<core::schemas::PointXYZI> map_points;
+    std::vector<core::schemas::PointXYZI> raw_map_points;
     std::vector<core::schemas::Pose3D> trajectory;
 };
 
@@ -195,6 +205,12 @@ class QmlBridge : public QObject {
     Q_PROPERTY(int selectedNodeViewIndex READ selectedNodeViewIndex WRITE setSelectedNodeViewIndex NOTIFY selectedNodeViewChanged)
     Q_PROPERTY(QString selectedNodeViewName READ selectedNodeViewName NOTIFY selectedNodeViewChanged)
     Q_PROPERTY(QString multiNodeNotice READ multiNodeNotice NOTIFY multiNodeNoticeChanged)
+    Q_PROPERTY(bool cslamColorByScanner READ cslamColorByScanner WRITE setCslamColorByScanner NOTIFY cslamStateChanged)
+    Q_PROPERTY(int cslamScannerCount READ cslamScannerCount NOTIFY cslamStateChanged)
+    Q_PROPERTY(int cslamSnappedCount READ cslamSnappedCount NOTIFY cslamStateChanged)
+    Q_PROPERTY(qlonglong cslamMergedPointCount READ cslamMergedPointCount NOTIFY cslamStateChanged)
+    Q_PROPERTY(QVariantList cslamNodesList READ cslamNodesList NOTIFY cslamStateChanged)
+    Q_PROPERTY(QString cslamStatusSummary READ cslamStatusSummary NOTIFY cslamStateChanged)
 
     // Milestone 9: Cross-Sensor Offline Registration
     Q_PROPERTY(bool isRegistering READ isRegistering NOTIFY registrationStateChanged)
@@ -215,6 +231,35 @@ class QmlBridge : public QObject {
     Q_PROPERTY(QString registrationRefCaptureId READ registrationRefCaptureId NOTIFY activeRegistrationChanged)
     Q_PROPERTY(QString registrationMovCaptureId READ registrationMovCaptureId NOTIFY activeRegistrationChanged)
     Q_PROPERTY(QVariantList availableSessionCaptures READ availableSessionCaptures NOTIFY availableSessionCapturesChanged)
+
+    // Milestone 12: Point Cloud Cleanup, Post-Processing & Multi-Format Export
+    Q_PROPERTY(QString cleanupStatus READ cleanupStatus NOTIFY cleanupStateChanged)
+    Q_PROPERTY(bool hasCleanupPreview READ hasCleanupPreview NOTIFY cleanupStateChanged)
+    Q_PROPERTY(qlonglong cleanupInputPoints READ cleanupInputPoints NOTIFY cleanupStateChanged)
+    Q_PROPERTY(qlonglong cleanupOutputPoints READ cleanupOutputPoints NOTIFY cleanupStateChanged)
+    Q_PROPERTY(qlonglong cleanupRemovedPoints READ cleanupRemovedPoints NOTIFY cleanupStateChanged)
+    Q_PROPERTY(qreal cleanupGroundTiltDeg READ cleanupGroundTiltDeg NOTIFY cleanupStateChanged)
+    Q_PROPERTY(bool liveCleanupEnabled READ liveCleanupEnabled WRITE setLiveCleanupEnabled NOTIFY cleanupStateChanged)
+    Q_PROPERTY(bool liveGroundLockEnabled READ liveGroundLockEnabled WRITE setLiveGroundLockEnabled NOTIFY cleanupStateChanged)
+    Q_PROPERTY(qreal liveCleanupTimeMs READ liveCleanupTimeMs NOTIFY cleanupStateChanged)
+    Q_PROPERTY(QString lastExportPath READ lastExportPath NOTIFY exportStateChanged)
+    Q_PROPERTY(QString exportStatus READ exportStatus NOTIFY exportStateChanged)
+
+    // Milestones 7 & 8: Rigid Extrinsic Calibration & Multi-Sensor Spatial Fusion
+    Q_PROPERTY(QString extrinsicCalibrationStatus READ extrinsicCalibrationStatus NOTIFY fusionStateChanged)
+    Q_PROPERTY(QString fusionStatus READ fusionStatus NOTIFY fusionStateChanged)
+    Q_PROPERTY(bool isFusionActive READ isFusionActive NOTIFY fusionStateChanged)
+    Q_PROPERTY(qlonglong fusedPointCount READ fusedPointCount NOTIFY fusionStateChanged)
+    Q_PROPERTY(qlonglong fusedColorizedPoints READ fusedColorizedPoints NOTIFY fusionStateChanged)
+    Q_PROPERTY(qreal extrinsicRmseMm READ extrinsicRmseMm NOTIFY fusionStateChanged)
+    Q_PROPERTY(qreal extrinsicOverlapPercent READ extrinsicOverlapPercent NOTIFY fusionStateChanged)
+    Q_PROPERTY(qreal extrinsicConfidence READ extrinsicConfidence NOTIFY fusionStateChanged)
+    Q_PROPERTY(QString extrinsicTransformSummary READ extrinsicTransformSummary NOTIFY fusionStateChanged)
+    Q_PROPERTY(QString activeAnchorSensor READ activeAnchorSensor NOTIFY fusionStateChanged)
+    Q_PROPERTY(QString activeAnchorName READ activeAnchorName NOTIFY fusionStateChanged)
+    Q_PROPERTY(QString activeAnchorRationale READ activeAnchorRationale NOTIFY fusionStateChanged)
+    Q_PROPERTY(bool isAnchorFailoverActive READ isAnchorFailoverActive NOTIFY fusionStateChanged)
+    Q_PROPERTY(qreal activeAnchorScore READ activeAnchorScore NOTIFY fusionStateChanged)
 
 public:
     explicit QmlBridge(std::shared_ptr<core::storage::StorageEngine> storage,
@@ -373,6 +418,13 @@ public:
     void setSelectedNodeViewIndex(int index);
     QString selectedNodeViewName() const;
     QString multiNodeNotice() const { return multiNodeNotice_; }
+    bool cslamColorByScanner() const { return cslamColorByScanner_; }
+    void setCslamColorByScanner(bool enabled);
+    int cslamScannerCount() const;
+    int cslamSnappedCount() const;
+    qlonglong cslamMergedPointCount() const;
+    QVariantList cslamNodesList() const;
+    QString cslamStatusSummary() const { return cslamStatusSummary_; }
 
     // Getters: Milestone 9 Cross-Sensor Offline Registration
     bool isRegistering() const { return isRegistering_; }
@@ -395,6 +447,37 @@ public:
     QString registrationRefCaptureId() const { return QString::fromStdString(activeRegistration_.reference_capture_id); }
     QString registrationMovCaptureId() const { return QString::fromStdString(activeRegistration_.moving_capture_id); }
     QVariantList availableSessionCaptures() const { return availableSessionCaptures_; }
+
+    // Getters: Milestone 12 Cleanup & Export
+    QString cleanupStatus() const { return cleanupStatus_; }
+    bool hasCleanupPreview() const { return hasCleanupPreview_; }
+    qlonglong cleanupInputPoints() const { return cleanupInputPoints_; }
+    qlonglong cleanupOutputPoints() const { return cleanupOutputPoints_; }
+    qlonglong cleanupRemovedPoints() const { return cleanupRemovedPoints_; }
+    qreal cleanupGroundTiltDeg() const { return cleanupGroundTiltDeg_; }
+    bool liveCleanupEnabled() const { return liveCleanupEnabled_; }
+    void setLiveCleanupEnabled(bool enabled);
+    bool liveGroundLockEnabled() const { return liveGroundLockEnabled_; }
+    void setLiveGroundLockEnabled(bool enabled);
+    qreal liveCleanupTimeMs() const { return liveCleanupTimeMs_; }
+    QString lastExportPath() const { return lastExportPath_; }
+    QString exportStatus() const { return exportStatus_; }
+
+    // Getters: Milestones 7 & 8 Extrinsic Calibration & Multi-Sensor Fusion
+    QString extrinsicCalibrationStatus() const { return extrinsicCalibrationStatus_; }
+    QString fusionStatus() const { return fusionStatus_; }
+    bool isFusionActive() const { return isFusionActive_; }
+    qlonglong fusedPointCount() const { return static_cast<qlonglong>(fusedMapPoints_.size()); }
+    qlonglong fusedColorizedPoints() const { return fusedColorizedPoints_; }
+    qreal extrinsicRmseMm() const { return extrinsicRmseMm_; }
+    qreal extrinsicOverlapPercent() const { return extrinsicOverlapPercent_; }
+    qreal extrinsicConfidence() const { return extrinsicConfidence_; }
+    QString extrinsicTransformSummary() const { return extrinsicTransformSummary_; }
+    QString activeAnchorSensor() const { return activeAnchorSensor_; }
+    QString activeAnchorName() const { return activeAnchorName_; }
+    QString activeAnchorRationale() const { return activeAnchorRationale_; }
+    bool isAnchorFailoverActive() const { return isAnchorFailoverActive_; }
+    qreal activeAnchorScore() const { return activeAnchorScore_; }
 
     // Q_INVOKABLE: Project Operations
     Q_INVOKABLE bool createProject(const QString& name, const QString& description);
@@ -437,6 +520,7 @@ public:
     Q_INVOKABLE void pan3D(qreal deltaX, qreal deltaY);
     Q_INVOKABLE void zoom3D(qreal deltaFactor);
     Q_INVOKABLE void recenter3D();
+    Q_INVOKABLE void autoFitCameraToMapBounds();
     Q_INVOKABLE void setPreset3D(const QString& preset);
 
     // Q_INVOKABLE: 2D Camera Interaction
@@ -451,6 +535,7 @@ public:
     Q_INVOKABLE void setOrientationDiagRotation(qreal rollDeg, qreal pitchDeg, qreal yawDeg);
     Q_INVOKABLE void stepOrientationDiagRotation(const QString& axis, qreal deltaDeg);
     Q_INVOKABLE void resetOrientationDiagRotation();
+    Q_INVOKABLE bool autoLevelOrientationDiag();
     Q_INVOKABLE bool acceptOrientationDiagRotation();
 
     // Q_INVOKABLE: Milestone 10 Multi-Node Session Operations
@@ -464,6 +549,10 @@ public:
     Q_INVOKABLE bool startCoordinatedCapture();
     Q_INVOKABLE bool stopCoordinatedCapture();
     Q_INVOKABLE void selectNodeView(int index);
+    Q_INVOKABLE int triggerCslamSnap();
+    Q_INVOKABLE void addSimulatedCslamScanner(const QString& scannerName, bool overlapping);
+    Q_INVOKABLE void clearCslamScanners();
+    Q_INVOKABLE void refreshCslamMergedCloud();
 
     // Q_INVOKABLE: Milestone 9 Offline Registration Operations (Intra-Project & Cross-Project)
     Q_INVOKABLE QVariantList getProjectClouds(const QString& projectId);
@@ -478,11 +567,34 @@ public:
     Q_INVOKABLE void saveRegistrationAsSessionMap(const QString& regId);
     Q_INVOKABLE void clearActiveRegistration();
 
+    // Q_INVOKABLE: Milestone 12 Point Cloud Cleanup, Post-Processing & Export
+    Q_INVOKABLE bool runPointCloudCleanup(bool enableVoxel, double voxelLeafM,
+                                          bool enableSor, int sorMeanK, double sorStdMul,
+                                          bool enableRor, double rorRadiusM, int rorMinNeighbors,
+                                          bool enableGroundAlign, bool removeGroundPlane = false);
+    Q_INVOKABLE void resetPointCloudCleanup();
+    Q_INVOKABLE bool commitCleanedPointCloud();
+    Q_INVOKABLE QString exportActivePointCloud(const QString& formatStr,
+                                               const QString& customOutputPath = "",
+                                               double meshGridResM = 0.04);
+
+    // Q_INVOKABLE: Milestones 7 & 8 Extrinsic Calibration & Multi-Sensor Spatial Fusion
+    Q_INVOKABLE bool calibrateActiveScannerExtrinsics();
+    Q_INVOKABLE bool fuseActiveMultiSensorMaps(double voxelLeafM = 0.015,
+                                               bool transferOpticalRgb = true,
+                                               bool diagnosticRoleColors = false);
+    Q_INVOKABLE bool saveFusedMapToProject();
+    Q_INVOKABLE void setSensorHealthOverride(const QString& sensorId, bool healthy, bool degraded = false);
+    Q_INVOKABLE void clearSensorHealthOverrides();
+
     // Direct PCD serialization & deserialization helpers
     void saveMapPcd(const std::string& filepath, const std::vector<core::schemas::PointXYZI>& points) const;
     bool loadMapPcd(const std::string& filepath, std::vector<core::schemas::PointXYZI>& out_points);
 
 signals:
+    void cleanupStateChanged();
+    void exportStateChanged();
+    void fusionStateChanged();
     void registrationStateChanged();
     void registrationListChanged();
     void activeRegistrationChanged();
@@ -537,6 +649,7 @@ signals:
     void sessionMembersChanged();
     void selectedNodeViewChanged();
     void multiNodeNoticeChanged();
+    void cslamStateChanged();
     void sessionInviteReceived(const QString& sessionId, const QString& coordinatorUuid, const QString& projectId);
 
 private slots:
@@ -545,6 +658,8 @@ private slots:
 
 private:
     void rebuildActiveSensorsForSelection();
+    void updateLiveMultiSensorFusion(bool realTimeMode = true);
+    void invalidateDisplayPointsCache() const { displayPointsCacheValid_ = false; }
 
     std::shared_ptr<core::storage::StorageEngine> storage_;
     std::shared_ptr<platform::IPlatformAdapter> platform_;
@@ -594,6 +709,10 @@ private:
     bool hasMapData_{false};
     std::vector<core::schemas::PointXYZI> mapPoints_;
     std::vector<core::schemas::Pose3D> trajectory_;
+    mutable QVariantList cachedDisplayPoints_;
+    mutable bool displayPointsCacheValid_{false};
+    mutable int cachedMaxPoints_{0};
+    mutable size_t cachedMapPointsSize_{0};
 
     // M6 Modular Multi-Sensor Platform Buffers & States
     std::vector<SensorRuntimeContext> activeSensors_;
@@ -676,10 +795,13 @@ private:
     // Camera Neural Reconstruction Backend State (Milestone 14.6)
     QString selectedCameraBackend_{"LingBotStreamingBackend"};
 
-    // Milestone 10: Multi-Node Session Infrastructure State
+    // Milestone 10: Multi-Node Session Infrastructure & Real-Time C-SLAM State
     std::shared_ptr<core::multi_node::MultiNodeSessionOrchestrator> multiNodeOrchestrator_;
-    int selectedNodeViewIndex_{0};
+    int selectedNodeViewIndex_{0}; // 0: Local, -1: Real-Time Merged C-SLAM, >0: Specific Remote Node
     QString multiNodeNotice_{"Single-node standalone mode."};
+    bool cslamColorByScanner_{true};
+    int simulatedCslamCounter_{0};
+    QString cslamStatusSummary_{"Ready for multi-scanner collaborative mapping."};
 
     // Milestone 9: Cross-Sensor Offline Registration State
     std::unique_ptr<core::registration::RegistrationEngine> registrationEngine_;
@@ -696,6 +818,37 @@ private:
     std::vector<core::schemas::PointXYZI> regCombinedPointsDiff_;
     std::vector<core::schemas::PointXYZI> regCombinedPointsOrig_;
     void updateRegistrationDisplayPoints();
+
+    // Milestone 12: Point Cloud Cleanup, Post-Processing & Export State
+    QString cleanupStatus_{"Ready for post-processing."};
+    bool hasCleanupPreview_{false};
+    qlonglong cleanupInputPoints_{0};
+    qlonglong cleanupOutputPoints_{0};
+    qlonglong cleanupRemovedPoints_{0};
+    qreal cleanupGroundTiltDeg_{0.0};
+    bool liveCleanupEnabled_{true};
+    bool liveGroundLockEnabled_{false};
+    qreal liveCleanupTimeMs_{0.0};
+    std::vector<core::schemas::PointXYZI> preCleanupBackupPoints_;
+    QString lastExportPath_{""};
+    QString exportStatus_{"Ready to export (.ply, .pcd, .xyz, .obj)."};
+
+    // Milestones 7 & 8: Rigid Extrinsic Calibration & Multi-Sensor Spatial Fusion State
+    QString extrinsicCalibrationStatus_{"UNKNOWN"};
+    QString fusionStatus_{"Ready for multi-sensor spatial fusion."};
+    bool isFusionActive_{false};
+    qlonglong fusedColorizedPoints_{0};
+    qreal extrinsicRmseMm_{0.0};
+    qreal extrinsicOverlapPercent_{0.0};
+    qreal extrinsicConfidence_{0.0};
+    QString extrinsicTransformSummary_{"No calibrated extrinsic transform loaded."};
+    std::vector<core::schemas::PointXYZI> fusedMapPoints_;
+    std::vector<core::schemas::Pose3D> fusedTrajectory_;
+    QString activeAnchorSensor_{"AIRY"};
+    QString activeAnchorName_{"Airy LiDAR"};
+    QString activeAnchorRationale_{"Highest nominal metric accuracy (LiDAR + IMU)."};
+    bool isAnchorFailoverActive_{false};
+    qreal activeAnchorScore_{100.0};
 };
 
 } // namespace av::gui

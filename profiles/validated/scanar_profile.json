@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "profile_id": "scanar_01",
+  "profile_version": "1.0.0",
+  "manufacturer": "scanarMini",
+  "model": "scanAR",
+  "device_family": "HYBRID_LIDAR_STEREO_SCANNER",
+  "profile_status": "VALIDATED",
+  "hardware_revision": "SCANAR_MINI_REV1",
+  "firmware": "Airy-3.1.20 / Gemini336L-1.4.60",
+  "capabilities": [
+    "POINT_CLOUD_3D",
+    "INTERNAL_IMU_6DOF",
+    "RGB_COLORIZATION",
+    "ENHANCED_SHORT_RANGE_DENSE_STEREO_CLOUD",
+    "DEPTH_STREAM",
+    "RGB_STREAM",
+    "INFRARED_LEFT",
+    "INFRARED_RIGHT",
+    "DIFOP_FACTORY_CALIBRATION",
+    "PTP_IEEE1588_SLAVE",
+    "HYBRID_LIO_STEREO_FUSION",
+    "CSLAM_MULTI_NODE_READY"
+  ],
+  "transport": "ETHERNET_UDP + USB3_V4L2",
+  "driver": "rslidar_sdk + orbbec_camera",
+  "sdk": "RoboSense SDK 1.5.8 + OrbbecSDK v2",
+  "streams": [
+    {
+      "name": "airy_lidar_points",
+      "type": "POINT_CLOUD",
+      "format": "XYZI_PCL",
+      "nominal_rate_hz": 10.0,
+      "enabled": true
+    },
+    {
+      "name": "airy_internal_imu",
+      "type": "IMU",
+      "format": "6DOF_IMU",
+      "nominal_rate_hz": 200.0,
+      "enabled": true
+    },
+    {
+      "name": "gemini_336l_stereo_depth",
+      "type": "DEPTH",
+      "format": "16UC1_MM",
+      "nominal_rate_hz": 30.0,
+      "enabled": true
+    },
+    {
+      "name": "gemini_336l_rgb_color",
+      "type": "RGB",
+      "format": "RGB8",
+      "nominal_rate_hz": 30.0,
+      "enabled": true
+    }
+  ],
+  "timestamp_sources": [
+    "PTP_IEEE1588",
+    "DEVICE_HARDWARE_CLOCK"
+  ],
+  "synchronization": "PTP_IEEE1588 + HARDWARE_CLOCK_SYNC",
+  "coordinate_frames": {
+    "body_frame": "scanar_base_link",
+    "lidar_frame": "airy_lidar",
+    "imu_frame": "airy_imu",
+    "stereo_depth_frame": "camera_depth_optical_frame",
+    "rgb_optical_frame": "camera_color_optical_frame"
+  },
+  "intrinsics": {
+    "project": "scanarMini",
+    "scanner_name": "scanAR",
+    "component_profiles": [
+      "robosense_airy_01",
+      "orbbec_gemini_336l_01"
+    ],
+    "fusion_architecture": {
+      "primary_lidar_and_imu": "RoboSense RS-Airy (32-beam hemispherical LiDAR + internal 200Hz 6-DoF IMU for gravity-aligned LIO odometry and long-range geometry)",
+      "colorization_and_short_range_stereo": "Orbbec Gemini 336L Active Stereo Camera (RGB optical colorization of LiDAR cloud + enhanced short-range dense stereo cloud 0.25m-6.0m)"
+    },
+    "airy_lidar": {
+      "laser_beams": 32,
+      "vertical_fov_deg": 31.0,
+      "horizontal_fov_deg": 360.0,
+      "range_min_m": 0.2,
+      "range_max_m": 150.0,
+      "internal_imu_rate_hz": 200.0
+    },
+    "gemini_336l_stereo": {
+      "width": 640,
+      "height": 400,
+      "fx": 382.4,
+      "fy": 382.4,
+      "cx": 320.5,
+      "cy": 200.2,
+      "short_range_min_m": 0.25,
+      "short_range_max_m": 4.5,
+      "colorization_enabled": true,
+      "dense_stereo_cloud_enabled": true
+    }
+  },
+  "internal_extrinsics": {
+    "airy_lidar_to_internal_imu": {
+      "translation": { "x": 0.004250, "y": 0.004180, "z": -0.004460 },
+      "rotation": { "x": 0.71145376, "y": -0.70271848, "z": 0.0018789, "w": 0.00409338 }
+    },
+    "gemini_336l_to_airy_canonical": {
+      "roll_deg": -2.7,
+      "pitch_deg": -51.0,
+      "yaw_deg": 79.5,
+      "transform_4x4": [
+        [ 0.114685, -0.975492, -0.187784,  0.004 ],
+        [ 0.618782,  0.218029, -0.754700,  0.168 ],
+        [ 0.777146, -0.029645,  0.628622, -0.017 ],
+        [ 0.0,       0.0,       0.0,       1.0   ]
+      ]
+    }
+  },
+  "calibration_sources": [
+    {
+      "schema_version": 1,
+      "value": "FACTORY_DIFOP_EEPROM + M5_5_EMPIRICAL_RIG_ALIGNMENT",
+      "source": "PHYSICAL_HARDWARE",
+      "confidence": 1.0,
+      "device_serial": "AIRY-2024-99812+CPC6463000XW",
+      "firmware": "3.1.20 / 1.4.60",
+      "evidence": "scanarMini scanAR integrated handheld scanner: Airy internal IMU + LiDAR with Gemini 336L RGB colorization and short-range dense stereo cloud",
+      "validated": true
+    }
+  ],
+  "slam_family": "HYBRID_LIO_RGBD_STEREO",
+  "slam_backend": "FAST-LIO2 + RTAB-Map",
+  "slam_parameters": {
+    "lio_backend": "FAST-LIO2 (Airy + Internal Airy IMU)",
+    "stereo_backend": "RTAB-Map (Gemini 336L RGB Colorization + Short-Range Dense Stereo)",
+    "short_range_stereo_max_m": 4.5,
+    "rgb_projection_colorization": true,
+    "realtime_m12_cleanup": true
+  },
+  "preprocessing": {
+    "voxel_filter_size_m": 0.03,
+    "outlier_removal_k": 20,
+    "outlier_std_dev": 1.8,
+    "colored_point_cloud": true
+  },
+  "output_contract": {
+    "target_frame": "canonical_av",
+    "frequency_hz": 15.0,
+    "point_type": "XYZRGB"
+  },
+  "canonical_av_transform": {
+    "target_convention": "CANONICAL_AV (+X Fwd, +Y Left, +Z Up, Ground XY)",
+    "source_frame": "scanar_base_link (Airy reference frame with aligned Gemini 336L stereo)",
+    "gravity_align_en": true,
+    "status": "VALIDATED"
+  },
+  "validation_results": {
+    "status": "VALIDATED",
+    "project": "scanarMini",
+    "scanner_name": "scanAR",
+    "tested_host": "Jetson Orin NX 16GB (scanar-01)",
+    "Cross_sensor_rmse_m": 0.0484,
+    "inlier_fraction_35cm": 0.998
+  },
+  "provenance": {
+    "schema_version": 1,
+    "value": "SCANAR_MINI_VALIDATED",
+    "source": "PHYSICAL_HARDWARE",
+    "confidence": 1.0,
+    "device_serial": "AIRY-2024-99812+CPC6463000XW",
+    "firmware": "3.1.20 / 1.4.60",
+    "evidence": "scanAR handheld scanner profile (scanarMini project): RoboSense Airy with internal IMU + Orbbec Gemini 336L stereo camera for RGB colorization and enhanced short-range dense stereo scanning",
+    "validated": true
+  }
+}

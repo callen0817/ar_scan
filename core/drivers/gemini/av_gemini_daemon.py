@@ -11,6 +11,7 @@ import os
 import sys
 import time
 import math
+import json
 import socket
 import struct
 import signal
@@ -155,6 +156,7 @@ class GeminiSlamDaemon:
                 "enable_colored_point_cloud:=true "
                 "enable_accel:=true "
                 "enable_gyro:=true "
+                "unite_imu_method:=copy "
                 "color_width:=640 color_height:=400 color_fps:=30 "
                 "depth_width:=640 depth_height:=400 depth_fps:=30"
             ]
@@ -170,10 +172,12 @@ class GeminiSlamDaemon:
                 "bash", "-c",
                 "source /opt/ros/humble/setup.bash && "
                 "exec ros2 launch rtabmap_launch rtabmap.launch.py "
-                "rtabmap_args:=\"--delete_db_on_start --Mem/IncrementalMemory true --RGBD/LinearUpdate 0.05 --RGBD/AngularUpdate 0.05\" "
+                "rtabmap_args:=\"--delete_db_on_start --Mem/IncrementalMemory true --RGBD/LinearUpdate 0.05 --RGBD/AngularUpdate 0.05 --Optimizer/GravitySigma 0.3\" "
                 "rgb_topic:=/camera/color/image_raw "
                 "depth_topic:=/camera/depth/image_raw "
                 "camera_info_topic:=/camera/color/camera_info "
+                "imu_topic:=/camera/gyro_accel/sample "
+                "wait_imu_to_init:=false "
                 "frame_id:=camera_link "
                 "approx_sync:=true "
                 "visual_odometry:=true "
@@ -259,16 +263,47 @@ class GeminiSlamDaemon:
             t_ns = msg.header.stamp.sec * 1000000000 + msg.header.stamp.nanosec
             p = msg.pose.pose.position
             o = msg.pose.pose.orientation
-            yaw = quat_to_yaw(o.x, o.y, o.z, o.w)
+            qx, qy, qz, qw = float(o.x), float(o.y), float(o.z), float(o.w)
+            yaw = quat_to_yaw(qx, qy, qz, qw)
 
             with self.lock:
                 if self.canonical_R:
                     px = self.canonical_R[0][0] * p.x + self.canonical_R[0][1] * p.y + self.canonical_R[0][2] * p.z
                     py = self.canonical_R[1][0] * p.x + self.canonical_R[1][1] * p.y + self.canonical_R[1][2] * p.z
                     pz = self.canonical_R[2][0] * p.x + self.canonical_R[2][1] * p.y + self.canonical_R[2][2] * p.z
-                    hx = self.canonical_R[0][0] * math.cos(yaw) + self.canonical_R[0][1] * math.sin(yaw)
-                    hy = self.canonical_R[1][0] * math.cos(yaw) + self.canonical_R[1][1] * math.sin(yaw)
-                    yaw = math.atan2(hy, hx)
+                    # Rotate 3x3 orientation matrix by canonical_R
+                    R_q = np.array([
+                        [1 - 2*(qy*qy + qz*qz), 2*(qx*qy - qz*qw),     2*(qx*qz + qy*qw)],
+                        [2*(qx*qy + qz*qw),     1 - 2*(qx*qx + qz*qz), 2*(qy*qz - qx*qw)],
+                        [2*(qx*qz - qy*qw),     2*(qy*qz + qx*qw),     1 - 2*(qx*qx + qy*qy)]
+                    ], dtype=np.float64)
+                    R_c = np.array(self.canonical_R, dtype=np.float64) @ R_q
+                    tr = R_c[0, 0] + R_c[1, 1] + R_c[2, 2]
+                    if tr > 0:
+                        S = math.sqrt(tr + 1.0) * 2.0
+                        qw = 0.25 * S
+                        qx = (R_c[2, 1] - R_c[1, 2]) / S
+                        qy = (R_c[0, 2] - R_c[2, 0]) / S
+                        qz = (R_c[1, 0] - R_c[0, 1]) / S
+                    elif (R_c[0, 0] > R_c[1, 1]) and (R_c[0, 0] > R_c[2, 2]):
+                        S = math.sqrt(1.0 + R_c[0, 0] - R_c[1, 1] - R_c[2, 2]) * 2.0
+                        qw = (R_c[2, 1] - R_c[1, 2]) / S
+                        qx = 0.25 * S
+                        qy = (R_c[0, 1] + R_c[1, 0]) / S
+                        qz = (R_c[0, 2] + R_c[2, 0]) / S
+                    elif R_c[1, 1] > R_c[2, 2]:
+                        S = math.sqrt(1.0 + R_c[1, 1] - R_c[0, 0] - R_c[2, 2]) * 2.0
+                        qw = (R_c[0, 2] - R_c[2, 0]) / S
+                        qx = (R_c[0, 1] + R_c[1, 0]) / S
+                        qy = 0.25 * S
+                        qz = (R_c[1, 2] + R_c[2, 1]) / S
+                    else:
+                        S = math.sqrt(1.0 + R_c[2, 2] - R_c[0, 0] - R_c[1, 1]) * 2.0
+                        qw = (R_c[1, 0] - R_c[0, 1]) / S
+                        qx = (R_c[0, 2] + R_c[2, 0]) / S
+                        qy = (R_c[1, 2] + R_c[2, 1]) / S
+                        qz = 0.25 * S
+                    yaw = quat_to_yaw(qx, qy, qz, qw)
                 else:
                     px, py, pz = float(p.x), float(p.y), float(p.z)
 
@@ -276,10 +311,10 @@ class GeminiSlamDaemon:
                     "x": float(px),
                     "y": float(py),
                     "z": float(pz),
-                    "qx": float(o.x),
-                    "qy": float(o.y),
-                    "qz": float(o.z),
-                    "qw": float(o.w),
+                    "qx": float(qx),
+                    "qy": float(qy),
+                    "qz": float(qz),
+                    "qw": float(qw),
                     "yaw": float(yaw),
                     "timestamp_ns": int(t_ns)
                 }
@@ -296,62 +331,129 @@ class GeminiSlamDaemon:
 
                 # Append trajectory if motion exceeds threshold
                 if not self.trajectory:
-                    self.trajectory.append((t_ns, px, py, pz, o.x, o.y, o.z, o.w, yaw))
+                    self.trajectory.append((t_ns, px, py, pz, qx, qy, qz, qw, yaw))
                 else:
                     last = self.trajectory[-1]
                     dist_sq = (px - last[1])**2 + (py - last[2])**2 + (pz - last[3])**2
                     angle_diff = abs(yaw - last[8])
                     if dist_sq >= 0.0004 or angle_diff >= 0.015:  # 2cm or ~0.8 deg
-                        self.trajectory.append((t_ns, px, py, pz, o.x, o.y, o.z, o.w, yaw))
+                        self.trajectory.append((t_ns, px, py, pz, qx, qy, qz, qw, yaw))
 
         def cloud_callback(msg: PointCloud2):
             if not self.is_capturing:
                 return
+            num_points = msg.width * msg.height
+            if num_points == 0 or msg.point_step < 12:
+                return
             with self.lock:
                 self._cloud_count += 1
+                R_canon = np.array(self.canonical_R, dtype=np.float32) if self.canonical_R else None
+                pose_xyz = (
+                    float(self.current_pose.get("x", 0.0)),
+                    float(self.current_pose.get("y", 0.0)),
+                    float(self.current_pose.get("z", 0.0))
+                )
             try:
-                # Read 3D points and real RGB from map frame
-                field_names = [f.name for f in msg.fields]
-                has_rgb = "rgb" in field_names
+                raw = bytes(msg.data)
+                field_map = {f.name: f.offset for f in msg.fields}
+                if "x" not in field_map or "y" not in field_map or "z" not in field_map:
+                    return
+
+                dt_names = ["x", "y", "z"]
+                dt_formats = ["<f4", "<f4", "<f4"]
+                dt_offsets = [field_map["x"], field_map["y"], field_map["z"]]
+                has_rgb = ("rgb" in field_map) or ("rgba" in field_map)
                 if has_rgb:
-                    gen = pc2.read_points(msg, field_names=("x", "y", "z", "rgb"), skip_nans=True)
+                    rgb_off = field_map.get("rgb", field_map.get("rgba"))
+                    dt_names.append("rgb")
+                    dt_formats.append("<u4")
+                    dt_offsets.append(rgb_off)
+
+                dt = np.dtype({
+                    "names": dt_names,
+                    "formats": dt_formats,
+                    "offsets": dt_offsets,
+                    "itemsize": msg.point_step
+                })
+                pts = np.frombuffer(raw, dtype=dt, count=num_points)
+                valid = np.isfinite(pts["x"]) & np.isfinite(pts["y"]) & np.isfinite(pts["z"])
+                pts_valid = pts[valid]
+                if len(pts_valid) == 0:
+                    return
+
+                coords = np.column_stack((pts_valid["x"], pts_valid["y"], pts_valid["z"])).astype(np.float32, copy=False)
+                if R_canon is not None:
+                    coords = coords @ R_canon.T
+
+                # Range gate relative to current pose (0.15m minimum blind-spot filter, 12.0m max global stereo horizon)
+                dx = coords[:, 0] - pose_xyz[0]
+                dy = coords[:, 1] - pose_xyz[1]
+                dz = coords[:, 2] - pose_xyz[2]
+                dist_sq = dx * dx + dy * dy + dz * dz
+                range_mask = (dist_sq >= 0.0225) & (dist_sq <= 144.0)
+                if not np.all(range_mask):
+                    coords = coords[range_mask]
+                    pts_valid = pts_valid[range_mask]
+                    if len(coords) == 0:
+                        return
+
+                if has_rgb:
+                    rgb_u32 = pts_valid["rgb"]
+                    rs = ((rgb_u32 >> 16) & 0xFF).astype(np.uint8)
+                    gs = ((rgb_u32 >> 8) & 0xFF).astype(np.uint8)
+                    bs = (rgb_u32 & 0xFF).astype(np.uint8)
+                    has_c = 1
                 else:
-                    gen = pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)
+                    rs = np.full(len(coords), 255, dtype=np.uint8)
+                    gs = np.full(len(coords), 255, dtype=np.uint8)
+                    bs = np.full(len(coords), 255, dtype=np.uint8)
+                    has_c = 0
 
                 v_size = self.voxel_size
+                gxs = np.floor(coords[:, 0] / v_size).astype(np.int64)
+                gys = np.floor(coords[:, 1] / v_size).astype(np.int64)
+                gzs = np.floor(coords[:, 2] / v_size).astype(np.int64)
+
+                # Deduplicate within current frame using packed 64-bit spatial hash before taking lock
+                keys64 = ((gxs & 0x1FFFFF) << 42) | ((gys & 0x1FFFFF) << 21) | (gzs & 0x1FFFFF)
+                _, unique_idx = np.unique(keys64, return_index=True)
+
+                u_coords = coords[unique_idx]
+                u_rs = rs[unique_idx]
+                u_gs = gs[unique_idx]
+                u_bs = bs[unique_idx]
+                u_gxs = gxs[unique_idx]
+                u_gys = gys[unique_idx]
+                u_gzs = gzs[unique_idx]
+
                 new_pts = []
-
                 with self.lock:
-                    for p in gen:
-                        x, y, z = float(p[0]), float(p[1]), float(p[2])
-                        if self.canonical_R:
-                            rx = self.canonical_R[0][0] * x + self.canonical_R[0][1] * y + self.canonical_R[0][2] * z
-                            ry = self.canonical_R[1][0] * x + self.canonical_R[1][1] * y + self.canonical_R[1][2] * z
-                            rz = self.canonical_R[2][0] * x + self.canonical_R[2][1] * y + self.canonical_R[2][2] * z
-                            x, y, z = rx, ry, rz
-                        if has_rgb:
-                            rgb_val = p[3]
-                            rgb_int = struct.unpack("I", struct.pack("f", float(rgb_val)))[0]
-                            r = (rgb_int >> 16) & 0xFF
-                            g = (rgb_int >> 8) & 0xFF
-                            b = rgb_int & 0xFF
-                            has_c = 1
-                        else:
-                            r, g, b, has_c = 255, 255, 255, 0
-
-                        gx = int(math.floor(x / v_size))
-                        gy = int(math.floor(y / v_size))
-                        gz = int(math.floor(z / v_size))
-                        key = (gx, gy, gz)
-                        if key not in self.global_voxels:
-                            intensity = 1.0
-                            pt_tuple = (x, y, z, intensity, r, g, b, has_c)
-                            self.global_voxels[key] = pt_tuple
+                    voxels = self.global_voxels
+                    for i in range(len(unique_idx)):
+                        key = (int(u_gxs[i]), int(u_gys[i]), int(u_gzs[i]))
+                        x, y, z = float(u_coords[i, 0]), float(u_coords[i, 1]), float(u_coords[i, 2])
+                        r, g, b = int(u_rs[i]), int(u_gs[i]), int(u_bs[i])
+                        prev = voxels.get(key)
+                        if prev is None:
+                            pt_tuple = (x, y, z, 1.0, r, g, b, has_c)
+                            voxels[key] = pt_tuple
                             new_pts.append(pt_tuple)
+                        else:
+                            # Running exponential centroid & RGB refinement (0.75 prior + 0.25 new observation)
+                            voxels[key] = (
+                                0.75 * prev[0] + 0.25 * x,
+                                0.75 * prev[1] + 0.25 * y,
+                                0.75 * prev[2] + 0.25 * z,
+                                1.0,
+                                int(0.75 * prev[4] + 0.25 * r),
+                                int(0.75 * prev[5] + 0.25 * g),
+                                int(0.75 * prev[6] + 0.25 * b),
+                                has_c
+                            )
 
                     if new_pts:
                         self.new_points_buffer.extend(new_pts)
-            except Exception as e:
+            except Exception:
                 pass
 
         def grid_callback(msg: OccupancyGrid):

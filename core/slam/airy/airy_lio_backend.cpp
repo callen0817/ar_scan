@@ -84,7 +84,7 @@ schemas::MapMetadata AiryLioBackend::getMapMetadata() const {
     schemas::MapMetadata meta("map_airy_" + std::to_string(current_pose_.timestamp_ns),
                              "session_active",
                              "robosense_airy_01",
-                             "scanR");
+                             "scanAR");
     meta.set_timestamp_ns(current_pose_.timestamp_ns);
     meta.set_current_pose(current_pose_);
     meta.set_trajectory(trajectory_);

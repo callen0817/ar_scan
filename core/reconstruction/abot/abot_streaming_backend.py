@@ -81,11 +81,13 @@ class ABotStreamingBackend:
         self.dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8 else torch.float32
 
         # OpenCV Camera to Canonical AV: X_av = Z_cam, Y_av = -X_cam, Z_av = -Y_cam
-        self.M_av_cam = np.array([
+        self.M_av_cam_base = np.array([
             [ 0.0,  0.0,  1.0],
             [-1.0,  0.0,  0.0],
             [ 0.0, -1.0,  0.0]
         ], dtype=np.float64)
+        self.M_av_cam = self.M_av_cam_base.copy()
+        self._load_canonical_transform()
 
         # Model instance
         self.model: Optional[ABotRecon] = None
@@ -125,6 +127,22 @@ class ABotStreamingBackend:
         self.inference_hz = 0.0
         self.last_step_duration = 0.0
         self.current_gpu_gb = 0.0
+
+    def _load_canonical_transform(self):
+        """Loads optional UVC canonical_transform.json to compose user orientation with M_av_cam_base."""
+        import json
+        self.M_av_cam = self.M_av_cam_base.copy()
+        tf_path = "/home/scanar/av_scan/core/drivers/uvc/canonical_transform.json"
+        if os.path.exists(tf_path):
+            try:
+                with open(tf_path, "r") as f:
+                    data = json.load(f)
+                    if "matrix_3x3" in data:
+                        R_user = np.array(data["matrix_3x3"], dtype=np.float64)
+                        self.M_av_cam = R_user @ self.M_av_cam_base
+                        print(f"[ABotBackend] Composed canonical transform from {tf_path}")
+            except Exception as e:
+                print(f"[ABotBackend] Error reading {tf_path}: {e}")
 
     def load_model(self) -> bool:
         """Loads official ABot-Recon checkpoint onto target GPU device."""

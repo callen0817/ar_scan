@@ -2,8 +2,15 @@
 #include "core/logging/logger.hpp"
 #include "platform/linux/linux_platform.hpp"
 #include <QQmlContext>
+#include <QQuickWindow>
+#include <QQuickItem>
+#include <QQuickItemGrabResult>
+#include <QImage>
+#include <QPainter>
+#include <QTimer>
 #include <QDir>
 #include <QFileInfo>
+#include <QIcon>
 #include <iostream>
 #include <filesystem>
 #include <dlfcn.h>
@@ -32,6 +39,8 @@ void Application::parseCommandLineArgs() {
             config_.data_root = arg.substr(12);
         } else if (arg.rfind("--log-file=", 0) == 0) {
             config_.log_file = arg.substr(11);
+        } else if (arg.rfind("--screenshot=", 0) == 0) {
+            config_.screenshot_path = arg.substr(13);
         }
     }
 
@@ -103,13 +112,23 @@ bool Application::initialize() {
     const char* display = std::getenv("DISPLAY");
     if (!display || config_.headless) {
         setenv("QT_QPA_PLATFORM", "offscreen", 0);
-        AV_LOG_INFO("Application", "Running with QT_QPA_PLATFORM=offscreen");
+        setenv("QT_QUICK_BACKEND", "software", 0);
+        AV_LOG_INFO("Application", "Running with QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software");
     }
+
+    // Enable per-pixel alpha buffer so the ApplicationWindow is genuinely transparent
+    // on desktop compositors and optical see-through AR glasses (matching scanarMini).
+    QQuickWindow::setDefaultAlphaBuffer(true);
 
     qapp_ = std::make_unique<QGuiApplication>(argc_, argv_);
     qapp_->setApplicationName("AV Scan");
     qapp_->setOrganizationName("Artificial Vision, Inc.");
     qapp_->setApplicationVersion("1.0.0");
+
+    fs::path icon_file = fs::path(config_.data_root) / "gui" / "qml" / "assets" / "av_logo.png";
+    if (fs::exists(icon_file)) {
+        qapp_->setWindowIcon(QIcon(QString::fromStdString(icon_file.string())));
+    }
 
     qml_engine_ = std::make_unique<QQmlApplicationEngine>();
 
@@ -142,6 +161,37 @@ bool Application::initialize() {
 }
 
 int Application::run() {
+    if (!config_.screenshot_path.empty()) {
+        QObject* root_obj = qml_engine_->rootObjects().first();
+        auto* window = qobject_cast<QQuickWindow*>(root_obj);
+        if (window && window->contentItem()) {
+            window->setVisibility(QWindow::Windowed);
+            window->setGeometry(0, 0, 1600, 960);
+            window->requestUpdate();
+            QTimer::singleShot(450, [window, this]() {
+                auto grab_result = window->contentItem()->grabToImage(QSize(1600, 960));
+                if (grab_result) {
+                    QObject::connect(grab_result.data(), &QQuickItemGrabResult::ready, [grab_result, this]() {
+                        QImage raw = grab_result->image();
+                        QImage composited(raw.size(), QImage::Format_RGB32);
+                        composited.fill(Qt::black);
+                        QPainter painter(&composited);
+                        painter.drawImage(0, 0, raw);
+                        painter.end();
+                        bool ok = composited.save(QString::fromStdString(config_.screenshot_path));
+                        AV_LOG_INFO("Application", "Saved UI screenshot (" +
+                                    std::to_string(composited.width()) + "x" +
+                                    std::to_string(composited.height()) + ", ok=" +
+                                    std::to_string(ok) + ") to: " + config_.screenshot_path);
+                        qapp_->quit();
+                    });
+                } else {
+                    qapp_->quit();
+                }
+            });
+            return qapp_->exec();
+        }
+    }
     if (config_.test_mode) {
         AV_LOG_INFO("Application", "Test mode active: verified initialization cleanly, exiting with status 0.");
         return 0;
@@ -150,3 +200,4 @@ int Application::run() {
 }
 
 } // namespace av::app
+

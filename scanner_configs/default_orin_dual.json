@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "config_id": "orin_dual_airy_gemini",
-  "name": "scanR",
+  "name": "scanAR",
   "scanner_node_id": "scanar-01",
   "sensor_instances": [
     "robosense_airy_01",

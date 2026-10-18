@@ -82,11 +82,13 @@ class LingBotStreamingBackend:
         self.new_height = round(1080 * (self.new_width / 1920.0) / patch_size) * patch_size # 294
 
         # OpenCV Camera to Canonical AV: X_av = Z_cam, Y_av = -X_cam, Z_av = -Y_cam
-        self.M_av_cam = np.array([
+        self.M_av_cam_base = np.array([
             [ 0.0,  0.0,  1.0],
             [-1.0,  0.0,  0.0],
             [ 0.0, -1.0,  0.0]
         ], dtype=np.float64)
+        self.M_av_cam = self.M_av_cam_base.copy()
+        self._load_canonical_transform()
 
         # Model instance (lazily loaded or preloaded)
         self.model: Optional[GCTStream] = None
@@ -123,6 +125,22 @@ class LingBotStreamingBackend:
         self.peak_gpu_memory_gb: float = 0.0
         self.current_gpu_memory_gb: float = 0.0
         self._last_served_point_idx: int = 0
+
+    def _load_canonical_transform(self):
+        """Loads optional UVC canonical_transform.json to compose user orientation with M_av_cam_base."""
+        import json
+        self.M_av_cam = self.M_av_cam_base.copy()
+        tf_path = "/home/scanar/av_scan/core/drivers/uvc/canonical_transform.json"
+        if os.path.exists(tf_path):
+            try:
+                with open(tf_path, "r") as f:
+                    data = json.load(f)
+                    if "matrix_3x3" in data:
+                        R_user = np.array(data["matrix_3x3"], dtype=np.float64)
+                        self.M_av_cam = R_user @ self.M_av_cam_base
+                        print(f"[LingBotBackend] Composed canonical transform from {tf_path}")
+            except Exception as e:
+                print(f"[LingBotBackend] Error reading {tf_path}: {e}")
 
     def load_model(self) -> bool:
         """Loads GCTStream foundation model and checkpoint with strict memory safety."""

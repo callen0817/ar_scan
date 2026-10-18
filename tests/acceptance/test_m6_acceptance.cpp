@@ -154,7 +154,8 @@ int main(int argc, char* argv[]) {
         // Select scanR dual configuration
         bridge->selectScannerById("orin_dual_airy_gemini");
         CHECK(bridge->isDualSensorMode(), "Bridge correctly flags isDualSensorMode for scanR dual config");
-        CHECK(bridge->activeDisplaySensor() == "AIRY", "Default active display sensor is AIRY");
+        CHECK(bridge->activeDisplaySensor() == "FUSED", "Default active display sensor is overlapped FUSED");
+        CHECK(bridge->activeAnchorSensor() == "AIRY", "Default active anchor sensor is AIRY");
 
         // Create a test project
         CHECK(bridge->createProject("M6 Dual Test Project", "Testing M6 simultaneous capture"), "Project created");
@@ -311,8 +312,10 @@ int main(int argc, char* argv[]) {
         CHECK(reopen_bridge->airyPointsCaptured() == 2000, "Airy independent buffer restored with 2000 points");
         CHECK(reopen_bridge->geminiPointsCaptured() == 1200, "Gemini independent buffer restored with 1200 points");
 
-        // Default display is Airy
-        CHECK(reopen_bridge->activeDisplaySensor() == "AIRY", "Default active display is AIRY");
+        // Default display is overlapped FUSED anchored on AIRY
+        CHECK(reopen_bridge->activeDisplaySensor() == "FUSED", "Default active display is overlapped FUSED");
+        CHECK(reopen_bridge->activeAnchorSensor() == "AIRY", "Default active anchor is AIRY");
+        reopen_bridge->setActiveDisplaySensor("AIRY");
         auto airyDisplay = reopen_bridge->getDisplayPoints(5000);
         CHECK(airyDisplay.size() == 2000, "Airy viewport returns 2000 points");
 

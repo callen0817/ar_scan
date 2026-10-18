@@ -4,6 +4,7 @@
 #include "node_identity_manager.hpp"
 #include "discovery_service.hpp"
 #include "coordination_service.hpp"
+#include "cslam_engine.hpp"
 #include "core/storage/storage_engine.hpp"
 #include "core/schemas/session.hpp"
 #include "core/schemas/capture.hpp"
@@ -29,6 +30,7 @@ public:
     void shutdown();
 
     // Local Node Identity
+    void setLocalIdentityOverride(const std::string& node_uuid, const std::string& display_name);
     schemas::ScannerNode getLocalNode();
     std::string getLocalNodeUuid();
     bool setDisplayName(const std::string& name);
@@ -52,18 +54,37 @@ public:
     bool joinSession(const std::string& session_id, const std::string& coord_ip, int coord_port);
     bool leaveSession();
 
+    // Collaborative SLAM (C-SLAM) Real-Time Point Cloud Merging & Registration
+    bool publishLocalSubmap(const std::vector<schemas::PointXYZI>& points,
+                            const schemas::Quaternion& imu_orientation = schemas::Quaternion{0.0, 0.0, 0.0, 1.0},
+                            const schemas::Pose3D& local_pose = schemas::Pose3D());
+    bool publishLocalSubmap(const std::vector<schemas::PointXYZI>& points,
+                            const std::vector<schemas::Pose3D>& trajectory,
+                            const schemas::Quaternion& imu_orientation,
+                            bool force_snap = false);
+    size_t triggerCslamOverlapEvaluation();
+    std::vector<schemas::PointXYZI> getMergedCslamPointCloud(bool differentiate_scanner_colors = true) const;
+    std::vector<ScannerSubmapState> getCslamScannerNodes() const;
+    CSlamEngine& cslamEngine() { return cslam_engine_; }
+    const CSlamEngine& cslamEngine() const { return cslam_engine_; }
+    CSlamEngine& cslam() { return cslam_engine_; }
+    const CSlamEngine& cslam() const { return cslam_engine_; }
+
     // Callbacks for GUI / App Bridge
     using InviteReceivedHandler = std::function<void(const std::string& session_id, const std::string& coordinator_uuid, const std::string& project_id)>;
     using CaptureStateChangedHandler = std::function<void(bool capturing, uint64_t timestamp_ns)>;
     using MemberListChangedHandler = std::function<void()>;
+    using CslamUpdatedHandler = std::function<void()>;
 
     void setInviteHandler(InviteReceivedHandler h) { on_invite_handler_ = h; }
     void setCaptureStateChangedHandler(CaptureStateChangedHandler h) { on_capture_state_changed_ = h; }
     void setMemberListChangedHandler(MemberListChangedHandler h) { on_member_list_changed_ = h; }
+    void setCslamUpdatedHandler(CslamUpdatedHandler h) { on_cslam_updated_ = h; }
 
     // Session State
     std::string getActiveSessionId();
     std::string getActiveProjectId();
+    bool isSessionActive() { return !getActiveSessionId().empty(); }
     schemas::NodeSessionRole getSessionRole();
     std::vector<SessionMemberInfo> getSessionMembers();
     bool isCapturing() const;
@@ -76,6 +97,10 @@ private:
     std::shared_ptr<storage::StorageEngine> storage_;
     std::shared_ptr<DiscoveryService> discovery_service_;
     std::shared_ptr<CoordinationService> coordination_service_;
+    CSlamEngine cslam_engine_;
+
+    std::string override_node_uuid_;
+    std::string override_display_name_;
 
     std::string active_project_id_;
     std::string active_session_id_;
@@ -90,6 +115,7 @@ private:
     InviteReceivedHandler on_invite_handler_;
     CaptureStateChangedHandler on_capture_state_changed_;
     MemberListChangedHandler on_member_list_changed_;
+    CslamUpdatedHandler on_cslam_updated_;
 
     void setupCallbacks();
     void updateBeaconAvailability(const std::string& state);

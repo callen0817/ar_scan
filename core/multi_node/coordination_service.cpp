@@ -37,6 +37,21 @@ CoordinationService::~CoordinationService() {
     stop();
 }
 
+void CoordinationService::setLocalIdentityOverride(const std::string& node_uuid, const std::string& display_name) {
+    override_node_uuid_ = node_uuid;
+    override_display_name_ = display_name;
+}
+
+std::string CoordinationService::getEffectiveNodeUuid() const {
+    if (!override_node_uuid_.empty()) return override_node_uuid_;
+    return NodeIdentityManager::instance().getNodeUuid();
+}
+
+std::string CoordinationService::getEffectiveDisplayName() const {
+    if (!override_display_name_.empty()) return override_display_name_;
+    return NodeIdentityManager::instance().getNode().display_name();
+}
+
 bool CoordinationService::start(int listen_port) {
     if (running_.load()) return true;
 
@@ -66,7 +81,7 @@ bool CoordinationService::start(int listen_port) {
         return false;
     }
 
-    if (listen(server_fd_, 16) < 0) {
+    if (listen(server_fd_, 128) < 0) {
         AV_LOG_ERROR("CoordinationService", "Failed to listen on TCP socket", strerror(errno));
         close(server_fd_);
         server_fd_ = -1;
@@ -97,6 +112,10 @@ void CoordinationService::stop() {
                 close(kv.second);
                 kv.second = -1;
             }
+        }
+        if (coordinator_sock_ >= 0) {
+            close(coordinator_sock_);
+            coordinator_sock_ = -1;
         }
     }
 
@@ -136,16 +155,39 @@ int CoordinationService::connectSocket(const std::string& ip, int port) {
 bool CoordinationService::sendMessage(int socket_fd, const CoordinationMessage& msg) {
     if (socket_fd < 0) return false;
     std::string serialized = msg.to_json().dump() + "\n";
-    ssize_t sent = send(socket_fd, serialized.data(), serialized.size(), MSG_NOSIGNAL);
-    return (sent == static_cast<ssize_t>(serialized.size()));
+    std::lock_guard<std::mutex> lock(send_mutex_);
+    size_t total_sent = 0;
+    while (total_sent < serialized.size()) {
+        ssize_t sent = send(socket_fd, serialized.data() + total_sent, serialized.size() - total_sent, MSG_NOSIGNAL);
+        if (sent <= 0) {
+            if (sent < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) {
+                continue;
+            }
+            return false;
+        }
+        total_sent += static_cast<size_t>(sent);
+    }
+    return true;
 }
 
-bool CoordinationService::broadcastToMembers(const CoordinationMessage& msg) {
+bool CoordinationService::broadcastToMembers(const CoordinationMessage& msg, const std::string& exclude_node_uuid) {
     std::lock_guard<std::mutex> lock(members_mutex_);
     bool all_ok = true;
+    std::unordered_set<int> visited_fds;
     for (const auto& kv : peer_sockets_) {
-        if (kv.second >= 0) {
+        if (!exclude_node_uuid.empty() && kv.first == exclude_node_uuid) {
+            continue;
+        }
+        if (kv.second >= 0 && visited_fds.find(kv.second) == visited_fds.end()) {
+            visited_fds.insert(kv.second);
             if (!sendMessage(kv.second, msg)) {
+                all_ok = false;
+            }
+        }
+    }
+    if (coordinator_sock_ >= 0 && visited_fds.find(coordinator_sock_) == visited_fds.end()) {
+        if (exclude_node_uuid.empty() || exclude_node_uuid != coordinator_uuid_) {
+            if (!sendMessage(coordinator_sock_, msg)) {
                 all_ok = false;
             }
         }
@@ -157,7 +199,7 @@ bool CoordinationService::createSession(const std::string& session_id, const std
     std::lock_guard<std::mutex> lock(session_mutex_);
     active_session_id_ = session_id;
     active_project_id_ = project_id;
-    coordinator_uuid_ = NodeIdentityManager::instance().getNodeUuid();
+    coordinator_uuid_ = getEffectiveNodeUuid();
     session_role_ = schemas::NodeSessionRole::SESSION_COORDINATOR;
     is_capturing_.store(false);
 
@@ -166,8 +208,8 @@ bool CoordinationService::createSession(const std::string& session_id, const std
     session_members_.clear();
     auto local_node = NodeIdentityManager::instance().getNode();
     SessionMemberInfo self_info;
-    self_info.node_uuid = local_node.node_uuid();
-    self_info.display_name = local_node.display_name();
+    self_info.node_uuid = getEffectiveNodeUuid();
+    self_info.display_name = getEffectiveDisplayName();
     self_info.platform = local_node.platform();
     self_info.ip_address = local_node.ip_address();
     self_info.port = listen_port_;
@@ -220,12 +262,12 @@ bool CoordinationService::invitePeer(const std::string& peer_ip, int peer_port, 
     CoordinationMessage hello;
     hello.message_id = NodeIdentityManager::generateUuidV4();
     hello.session_id = sess_id;
-    hello.source_node_uuid = NodeIdentityManager::instance().getNodeUuid();
+    hello.source_node_uuid = getEffectiveNodeUuid();
     hello.destination_node_uuid = peer_node_uuid;
     hello.timestamp_ns = getNowNs();
     hello.message_type = MessageType::HELLO;
     hello.payload = {
-        {"display_name", NodeIdentityManager::instance().getNode().display_name()},
+        {"display_name", getEffectiveDisplayName()},
         {"platform", NodeIdentityManager::instance().detectPlatform()},
         {"coordination_port", listen_port_}
     };
@@ -235,14 +277,14 @@ bool CoordinationService::invitePeer(const std::string& peer_ip, int peer_port, 
     CoordinationMessage invite;
     invite.message_id = NodeIdentityManager::generateUuidV4();
     invite.session_id = sess_id;
-    invite.source_node_uuid = NodeIdentityManager::instance().getNodeUuid();
+    invite.source_node_uuid = getEffectiveNodeUuid();
     invite.destination_node_uuid = peer_node_uuid;
     invite.timestamp_ns = getNowNs();
     invite.message_type = MessageType::INVITE_SESSION;
     invite.payload = {
         {"session_id", sess_id},
         {"project_id", proj_id},
-        {"coordinator_node_uuid", NodeIdentityManager::instance().getNodeUuid()}
+        {"coordinator_node_uuid", getEffectiveNodeUuid()}
     };
     return sendMessage(sock, invite);
 }
@@ -260,6 +302,10 @@ bool CoordinationService::connectToCoordinator(const std::string& coord_ip, int 
         coordinator_port_ = coord_port;
         session_role_ = schemas::NodeSessionRole::SESSION_PARTICIPANT;
     }
+    {
+        std::lock_guard<std::mutex> lock(members_mutex_);
+        coordinator_sock_ = sock;
+    }
 
     client_threads_.emplace_back(&CoordinationService::clientConnectionWorker, this, sock, coord_ip);
 
@@ -267,11 +313,11 @@ bool CoordinationService::connectToCoordinator(const std::string& coord_ip, int 
     CoordinationMessage hello;
     hello.message_id = NodeIdentityManager::generateUuidV4();
     hello.session_id = active_session_id_;
-    hello.source_node_uuid = NodeIdentityManager::instance().getNodeUuid();
+    hello.source_node_uuid = getEffectiveNodeUuid();
     hello.timestamp_ns = getNowNs();
     hello.message_type = MessageType::HELLO;
     hello.payload = {
-        {"display_name", NodeIdentityManager::instance().getNode().display_name()},
+        {"display_name", getEffectiveDisplayName()},
         {"platform", NodeIdentityManager::instance().detectPlatform()},
         {"coordination_port", listen_port_}
     };
@@ -291,18 +337,19 @@ bool CoordinationService::acceptSessionInvite(const std::string& session_id) {
         std::lock_guard<std::mutex> lock(members_mutex_);
         auto it = peer_sockets_.find(coord_uuid);
         if (it != peer_sockets_.end()) coord_sock = it->second;
+        if (coord_sock < 0) coord_sock = coordinator_sock_;
     }
 
     if (coord_sock >= 0) {
         CoordinationMessage join;
         join.message_id = NodeIdentityManager::generateUuidV4();
         join.session_id = session_id;
-        join.source_node_uuid = NodeIdentityManager::instance().getNodeUuid();
+        join.source_node_uuid = getEffectiveNodeUuid();
         join.destination_node_uuid = coord_uuid;
         join.timestamp_ns = getNowNs();
         join.message_type = MessageType::JOIN_SESSION;
         join.payload = {
-            {"display_name", NodeIdentityManager::instance().getNode().display_name()},
+            {"display_name", getEffectiveDisplayName()},
             {"platform", NodeIdentityManager::instance().detectPlatform()}
         };
         return sendMessage(coord_sock, join);
@@ -321,13 +368,14 @@ bool CoordinationService::reportReadyForCapture(const std::string& session_id) {
         std::lock_guard<std::mutex> lock(members_mutex_);
         auto it = peer_sockets_.find(coord_uuid);
         if (it != peer_sockets_.end()) coord_sock = it->second;
+        if (coord_sock < 0) coord_sock = coordinator_sock_;
     }
 
     if (coord_sock >= 0) {
         CoordinationMessage msg;
         msg.message_id = NodeIdentityManager::generateUuidV4();
         msg.session_id = session_id;
-        msg.source_node_uuid = NodeIdentityManager::instance().getNodeUuid();
+        msg.source_node_uuid = getEffectiveNodeUuid();
         msg.destination_node_uuid = coord_uuid;
         msg.timestamp_ns = getNowNs();
         msg.message_type = MessageType::READY_FOR_CAPTURE;
@@ -351,13 +399,14 @@ bool CoordinationService::reportCaptureStatus(const std::string& session_id, con
         std::lock_guard<std::mutex> lock(members_mutex_);
         auto it = peer_sockets_.find(coord_uuid);
         if (it != peer_sockets_.end()) coord_sock = it->second;
+        if (coord_sock < 0) coord_sock = coordinator_sock_;
     }
 
     if (coord_sock >= 0) {
         CoordinationMessage msg;
         msg.message_id = NodeIdentityManager::generateUuidV4();
         msg.session_id = session_id;
-        msg.source_node_uuid = NodeIdentityManager::instance().getNodeUuid();
+        msg.source_node_uuid = getEffectiveNodeUuid();
         msg.destination_node_uuid = coord_uuid;
         msg.timestamp_ns = getNowNs();
         msg.message_type = MessageType::CAPTURE_STATUS;
@@ -369,6 +418,69 @@ bool CoordinationService::reportCaptureStatus(const std::string& session_id, con
         return sendMessage(coord_sock, msg);
     }
     return false;
+}
+
+bool CoordinationService::sendSubmapUpdate(const nlohmann::json& payload) {
+    std::string sess_id;
+    {
+        std::lock_guard<std::mutex> lock(session_mutex_);
+        sess_id = active_session_id_;
+    }
+    if (sess_id.empty()) return false;
+
+    CoordinationMessage msg;
+    msg.message_id = NodeIdentityManager::generateUuidV4();
+    msg.session_id = sess_id;
+    msg.source_node_uuid = getEffectiveNodeUuid();
+    msg.destination_node_uuid = "*";
+    msg.timestamp_ns = getNowNs();
+    msg.message_type = MessageType::CSLAM_SUBMAP_UPDATE;
+    msg.payload = payload;
+    return broadcastToMembers(msg);
+}
+
+bool CoordinationService::broadcastAlignmentUpdate(const nlohmann::json& payload) {
+    std::string sess_id;
+    {
+        std::lock_guard<std::mutex> lock(session_mutex_);
+        sess_id = active_session_id_;
+    }
+    if (sess_id.empty()) return false;
+
+    CoordinationMessage msg;
+    msg.message_id = NodeIdentityManager::generateUuidV4();
+    msg.session_id = sess_id;
+    msg.source_node_uuid = getEffectiveNodeUuid();
+    msg.destination_node_uuid = "*";
+    msg.timestamp_ns = getNowNs();
+    msg.message_type = MessageType::CSLAM_ALIGNMENT_UPDATE;
+    msg.payload = payload;
+    return broadcastToMembers(msg);
+}
+
+bool CoordinationService::sendDirectMessageToPeer(const std::string& peer_node_uuid, const std::string& msg_type, const nlohmann::json& payload) {
+    std::string sess_id;
+    {
+        std::lock_guard<std::mutex> lock(session_mutex_);
+        sess_id = active_session_id_;
+    }
+    int sock = -1;
+    {
+        std::lock_guard<std::mutex> lock(members_mutex_);
+        auto it = peer_sockets_.find(peer_node_uuid);
+        if (it != peer_sockets_.end()) sock = it->second;
+    }
+    if (sock < 0) return false;
+
+    CoordinationMessage msg;
+    msg.message_id = NodeIdentityManager::generateUuidV4();
+    msg.session_id = sess_id;
+    msg.source_node_uuid = getEffectiveNodeUuid();
+    msg.destination_node_uuid = peer_node_uuid;
+    msg.timestamp_ns = getNowNs();
+    msg.message_type = msg_type;
+    msg.payload = payload;
+    return sendMessage(sock, msg);
 }
 
 bool CoordinationService::leaveSession() {
@@ -387,6 +499,7 @@ bool CoordinationService::leaveSession() {
         std::lock_guard<std::mutex> lock(members_mutex_);
         auto it = peer_sockets_.find(coord_uuid);
         if (it != peer_sockets_.end()) coord_sock = it->second;
+        if (coord_sock < 0) coord_sock = coordinator_sock_;
         session_members_.clear();
     }
 
@@ -394,7 +507,7 @@ bool CoordinationService::leaveSession() {
         CoordinationMessage msg;
         msg.message_id = NodeIdentityManager::generateUuidV4();
         msg.session_id = sess_id;
-        msg.source_node_uuid = NodeIdentityManager::instance().getNodeUuid();
+        msg.source_node_uuid = getEffectiveNodeUuid();
         msg.destination_node_uuid = coord_uuid;
         msg.timestamp_ns = getNowNs();
         msg.message_type = MessageType::LEAVE_SESSION;
@@ -411,11 +524,11 @@ bool CoordinationService::connectToPeer(const std::string& peer_ip, int peer_por
 
     CoordinationMessage hello;
     hello.message_id = NodeIdentityManager::generateUuidV4();
-    hello.source_node_uuid = NodeIdentityManager::instance().getNodeUuid();
+    hello.source_node_uuid = getEffectiveNodeUuid();
     hello.timestamp_ns = getNowNs();
     hello.message_type = MessageType::HELLO;
     hello.payload = {
-        {"display_name", NodeIdentityManager::instance().getNode().display_name()},
+        {"display_name", getEffectiveDisplayName()},
         {"platform", NodeIdentityManager::instance().detectPlatform()},
         {"coordination_port", listen_port_}
     };
@@ -437,7 +550,7 @@ bool CoordinationService::prepareCapture(uint64_t requested_start_ns) {
     {
         std::lock_guard<std::mutex> lock(members_mutex_);
         for (auto& kv : session_members_) {
-            if (kv.first != NodeIdentityManager::instance().getNodeUuid()) {
+            if (kv.first != getEffectiveNodeUuid()) {
                 kv.second.is_ready = false;
                 kv.second.capture_state = "PREPARING";
             }
@@ -447,7 +560,7 @@ bool CoordinationService::prepareCapture(uint64_t requested_start_ns) {
     CoordinationMessage msg;
     msg.message_id = NodeIdentityManager::generateUuidV4();
     msg.session_id = sess_id;
-    msg.source_node_uuid = NodeIdentityManager::instance().getNodeUuid();
+    msg.source_node_uuid = getEffectiveNodeUuid();
     msg.destination_node_uuid = "*";
     msg.timestamp_ns = getNowNs();
     msg.message_type = MessageType::PREPARE_CAPTURE;
@@ -483,7 +596,7 @@ bool CoordinationService::startCapture(uint64_t requested_start_ns) {
     CoordinationMessage msg;
     msg.message_id = NodeIdentityManager::generateUuidV4();
     msg.session_id = sess_id;
-    msg.source_node_uuid = NodeIdentityManager::instance().getNodeUuid();
+    msg.source_node_uuid = getEffectiveNodeUuid();
     msg.destination_node_uuid = "*";
     msg.timestamp_ns = getNowNs();
     msg.message_type = MessageType::START_CAPTURE;
@@ -519,7 +632,7 @@ bool CoordinationService::stopCapture(uint64_t requested_stop_ns) {
     CoordinationMessage msg;
     msg.message_id = NodeIdentityManager::generateUuidV4();
     msg.session_id = sess_id;
-    msg.source_node_uuid = NodeIdentityManager::instance().getNodeUuid();
+    msg.source_node_uuid = getEffectiveNodeUuid();
     msg.destination_node_uuid = "*";
     msg.timestamp_ns = getNowNs();
     msg.message_type = MessageType::STOP_CAPTURE;
@@ -596,7 +709,7 @@ void CoordinationService::serverAcceptWorker() {
 
 void CoordinationService::clientConnectionWorker(int socket_fd, std::string peer_ip) {
     std::string line_buffer;
-    char buffer[4096];
+    std::vector<char> buffer(65536);
     std::string associated_node_uuid;
 
     while (running_.load()) {
@@ -613,13 +726,13 @@ void CoordinationService::clientConnectionWorker(int socket_fd, std::string peer
         }
 
         if (pfd.revents & POLLIN) {
-            ssize_t bytes_read = recv(socket_fd, buffer, sizeof(buffer), 0);
+            ssize_t bytes_read = recv(socket_fd, buffer.data(), buffer.size(), 0);
             if (bytes_read <= 0) {
                 // Connection closed or error
                 break;
             }
 
-            line_buffer.append(buffer, bytes_read);
+            line_buffer.append(buffer.data(), static_cast<size_t>(bytes_read));
             size_t pos = 0;
             while ((pos = line_buffer.find('\n')) != std::string::npos) {
                 std::string line = line_buffer.substr(0, pos);
@@ -656,6 +769,9 @@ void CoordinationService::clientConnectionWorker(int socket_fd, std::string peer
                 it->second.is_connected = false;
             }
             peer_sockets_.erase(associated_node_uuid);
+            if (coordinator_sock_ == socket_fd) {
+                coordinator_sock_ = -1;
+            }
         }
         if (on_connection_changed_) {
             on_connection_changed_(associated_node_uuid, false);
@@ -724,23 +840,37 @@ void CoordinationService::handleIncomingMessage(int socket_fd, const Coordinatio
             }
 
             AV_LOG_INFO("CoordinationService", "Node " + msg.source_node_uuid + " successfully JOINED session " + sid);
-            if (on_member_joined_) {
-                on_member_joined_(msg.source_node_uuid, sid);
-            }
 
-            // Acknowledge session status
+            // Acknowledge session status first so participant has coordinator_uuid
             CoordinationMessage status_msg;
             status_msg.message_id = NodeIdentityManager::generateUuidV4();
             status_msg.session_id = sid;
-            status_msg.source_node_uuid = NodeIdentityManager::instance().getNodeUuid();
+            status_msg.source_node_uuid = getEffectiveNodeUuid();
             status_msg.destination_node_uuid = msg.source_node_uuid;
             status_msg.timestamp_ns = getNowNs();
             status_msg.message_type = MessageType::SESSION_STATUS;
             status_msg.payload = {
                 {"is_capturing", is_capturing_.load()},
-                {"coordinator_node_uuid", NodeIdentityManager::instance().getNodeUuid()}
+                {"coordinator_node_uuid", getEffectiveNodeUuid()}
             };
             sendMessage(socket_fd, status_msg);
+
+            if (on_member_joined_) {
+                on_member_joined_(msg.source_node_uuid, sid);
+            }
+        }
+
+    } else if (msg.message_type == MessageType::SESSION_STATUS) {
+        std::string coord_uuid = getPayloadValue<std::string>(msg.payload, "coordinator_node_uuid", msg.source_node_uuid);
+        if (!coord_uuid.empty()) {
+            {
+                std::lock_guard<std::mutex> lock(session_mutex_);
+                coordinator_uuid_ = coord_uuid;
+            }
+            {
+                std::lock_guard<std::mutex> lock(members_mutex_);
+                peer_sockets_[coord_uuid] = socket_fd;
+            }
         }
 
     } else if (msg.message_type == MessageType::LEAVE_SESSION) {
@@ -763,7 +893,7 @@ void CoordinationService::handleIncomingMessage(int socket_fd, const Coordinatio
             coord_uuid = coordinator_uuid_;
         }
 
-        if (!sid.empty() && msg.session_id == sid && msg.source_node_uuid == coord_uuid) {
+        if (!sid.empty() && msg.session_id == sid && (coord_uuid.empty() || msg.source_node_uuid == coord_uuid)) {
             uint64_t req_start = getPayloadValue<uint64_t>(msg.payload, "requested_start_time_ns", 0ULL);
             bool ready = true;
             if (on_prepare_capture_) {
@@ -793,7 +923,7 @@ void CoordinationService::handleIncomingMessage(int socket_fd, const Coordinatio
             coord_uuid = coordinator_uuid_;
         }
 
-        if (!sid.empty() && msg.session_id == sid && msg.source_node_uuid == coord_uuid) {
+        if (!sid.empty() && msg.session_id == sid && (coord_uuid.empty() || msg.source_node_uuid == coord_uuid)) {
             // Idempotency check: don't start again if already capturing
             if (!is_capturing_.exchange(true)) {
                 uint64_t req_start = getPayloadValue<uint64_t>(msg.payload, "requested_start_time_ns", 0ULL);
@@ -815,7 +945,7 @@ void CoordinationService::handleIncomingMessage(int socket_fd, const Coordinatio
             coord_uuid = coordinator_uuid_;
         }
 
-        if (!sid.empty() && msg.session_id == sid && msg.source_node_uuid == coord_uuid) {
+        if (!sid.empty() && msg.session_id == sid && (coord_uuid.empty() || msg.source_node_uuid == coord_uuid)) {
             // Idempotency check: don't stop again if already stopped
             if (is_capturing_.exchange(false)) {
                 uint64_t req_stop = getPayloadValue<uint64_t>(msg.payload, "requested_stop_time_ns", 0ULL);
@@ -843,6 +973,26 @@ void CoordinationService::handleIncomingMessage(int socket_fd, const Coordinatio
             on_capture_status_(msg.source_node_uuid, cap_id, st, obs);
         }
 
+    } else if (msg.message_type == MessageType::CSLAM_SUBMAP_UPDATE) {
+        if (on_cslam_submap_) {
+            on_cslam_submap_(msg.source_node_uuid, msg.payload);
+        }
+        // If we are the Coordinator, relay this submap update to all other participants
+        // so that all N scanners in the session maintain a live merged point cloud!
+        schemas::NodeSessionRole role;
+        {
+            std::lock_guard<std::mutex> lock(session_mutex_);
+            role = session_role_;
+        }
+        if (role == schemas::NodeSessionRole::SESSION_COORDINATOR) {
+            broadcastToMembers(msg, msg.source_node_uuid);
+        }
+
+    } else if (msg.message_type == MessageType::CSLAM_ALIGNMENT_UPDATE) {
+        if (on_cslam_alignment_) {
+            on_cslam_alignment_(msg.source_node_uuid, msg.payload);
+        }
+
     } else if (msg.message_type == MessageType::HEARTBEAT) {
         uint64_t now_ns = getNowNs();
         uint64_t sender_ts = msg.timestamp_ns;
@@ -865,7 +1015,7 @@ void CoordinationService::heartbeatWorker() {
         CoordinationMessage hb;
         hb.message_id = NodeIdentityManager::generateUuidV4();
         hb.timestamp_ns = getNowNs();
-        hb.source_node_uuid = NodeIdentityManager::instance().getNodeUuid();
+        hb.source_node_uuid = getEffectiveNodeUuid();
         hb.message_type = MessageType::HEARTBEAT;
 
         {
